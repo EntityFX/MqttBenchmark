@@ -1,6 +1,6 @@
 using System.Security.Cryptography;
 
-namespace EntityFX.IotSimulator.Stress;
+namespace EntityFX.MqttBenchmark.Bomber;
 
 public static class StringHelper
 {

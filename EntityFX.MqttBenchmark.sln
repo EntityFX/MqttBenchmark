@@ -1,8 +1,31 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.1.32210.238
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "EntityFX.MqttBenchmark", "EntityFX.MqttBenchmark\EntityFX.MqttBenchmark.csproj", "{24C87DD8-6619-4BF0-9EB0-B6E5F3693315}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "EntityFX.MqttBenchmark.Bomber", "EntityFX.MqttBenchmark.Bomber\EntityFX.MqttBenchmark.Bomber.csproj", "{735DED6D-8B09-4FC4-84EE-C9C289D0D317}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
 		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{24C87DD8-6619-4BF0-9EB0-B6E5F3693315}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{24C87DD8-6619-4BF0-9EB0-B6E5F3693315}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{24C87DD8-6619-4BF0-9EB0-B6E5F3693315}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{24C87DD8-6619-4BF0-9EB0-B6E5F3693315}.Release|Any CPU.Build.0 = Release|Any CPU
+		{735DED6D-8B09-4FC4-84EE-C9C289D0D317}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{735DED6D-8B09-4FC4-84EE-C9C289D0D317}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{735DED6D-8B09-4FC4-84EE-C9C289D0D317}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{735DED6D-8B09-4FC4-84EE-C9C289D0D317}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {4C78E49D-448B-4C2B-9704-28063203634D}
 	EndGlobalSection
 EndGlobal

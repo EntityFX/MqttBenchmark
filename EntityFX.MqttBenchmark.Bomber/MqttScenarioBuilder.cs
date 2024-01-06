@@ -5,7 +5,8 @@ using NBomber;
 using NBomber.CSharp;
 using MQTTnet.Client;
 using NBomber.Contracts;
-using EntityFX.IotSimulator.Stress;
+
+namespace EntityFX.MqttBenchmark.Bomber;
 
 class MqttScenarioBuilder
 {

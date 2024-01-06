@@ -1,5 +1,7 @@
 ﻿using MQTTnet.Protocol;
 
+namespace EntityFX.MqttBenchmark.Bomber;
+
 public class MqttScenarioSettings
 {
     public string Topic { get; set; }

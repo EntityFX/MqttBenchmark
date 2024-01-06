@@ -5,7 +5,7 @@ using MQTTnet;
 using MQTTnet.Client;
 using NBomber;
 
-namespace EntityFX.IotSimulator.Stress;
+namespace EntityFX.MqttBenchmark.Bomber;
 
 static class ScenarioHelper
 {

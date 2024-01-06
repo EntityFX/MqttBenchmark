@@ -1,10 +1,11 @@
-﻿using EntityFX.IotSimulator.Stress;
+﻿using EntityFX.MqttBenchmark.Bomber;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using NBomber.CSharp;
 using NBomber.Sinks.InfluxDB;
+
 
 var builder = Host.CreateApplicationBuilder(args);
 
