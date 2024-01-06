@@ -1,0 +1,91 @@
+{
+  "InfluxDBSink": {
+    "Url": "http://10.10.166.28:8086",
+    "_Token": "N3Z_uUDSQ61qVp93K5dNzH3rbNcKxtphDLrjfS_DcX2cdTr3nR2pOlixGCx6HQ8VI66nqnyztOlPFoWFXoe62Q==",
+    "UserName": "superuser",
+    "Password": "Passw0rd!",
+    "Org": "MyOrg",
+    "Bucket": "NBomber",
+    "CustomTags": [
+      {
+        "Key": "environment",
+        "Value": "linux"
+      }
+    ]
+  },
+  "TestSuite": "entityfx.org",
+  "TestName": "test_mqtt_load",
+  "TargetScenarios": [
+    "benchmark-qos0-activemq-1c-cl1",
+    "benchmark-qos0-emqx-1c-cl1",
+    "benchmark-qos0-mosquitto-1c-cl1"
+  ],
+  "GlobalSettings": {
+    "ScenariosSettings": [
+      {
+        "ScenarioName": "benchmark-qos0-activemq-1c-cl1",
+        "LoadSimulationsSettings": [
+          {
+            "KeepConstant": [
+              1,
+              "00:01:00"
+            ]
+          }
+        ],
+        "CustomSettings": {
+          "topic": "benchmark/qos0",
+          "qos": 0,
+          "clientsCount": 1,
+          "server": "192.168.197.3",
+          "port": 1883
+        },
+        "MaxFailCount": 500
+      },
+      {
+        "ScenarioName": "benchmark-qos0-emqx-1c-cl1",
+        "LoadSimulationsSettings": [
+          {
+            "KeepConstant": [
+              1,
+              "00:01:00"
+            ]
+          }
+        ],
+        "CustomSettings": {
+          "topic": "benchmark/qos0",
+          "qos": 0,
+          "clientsCount": 1,
+          "server": "192.168.197.9",
+          "port": 1883
+        },
+        "MaxFailCount": 500
+      },
+      {
+        "ScenarioName": "benchmark-qos0-mosquitto-1c-cl1",
+        "LoadSimulationsSettings": [
+          {
+            "KeepConstant": [
+              1,
+              "00:01:00"
+            ]
+          }
+        ],
+        "CustomSettings": {
+          "topic": "benchmark/qos0",
+          "qos": 0,
+          "clientsCount": 1,
+          "server": "192.168.197.5",
+          "port": 1883
+        },
+        "MaxFailCount": 500
+      }
+    ],
+    "ReportFileName": "custom_report_name",
+    "ReportFolder": "./mqtt-reports",
+    "ReportFormats": [
+      "Html",
+      "Txt"
+    ],
+    "ReportingInterval": "00:00:05"
+  }
+}

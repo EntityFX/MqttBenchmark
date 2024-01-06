@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "EntityFX.MqttBenchmark": {
+      "commandName": "Project",
+      "environmentVariables": {
+        "DOTNET_ENVIRONMENT": "Development"
+      }
+    }
+  }
+}
