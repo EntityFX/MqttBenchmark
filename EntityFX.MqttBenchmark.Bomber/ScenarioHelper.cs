@@ -14,14 +14,7 @@ static class ScenarioHelper
         var rootConfig = host.Services.GetRequiredService<IConfiguration>();
         var profile = rootConfig.GetSection("profile");
 
-
-        var configBuilder = new ConfigurationBuilder()
-            .AddJsonFile(profile.Value);
-
-
-        var config = configBuilder.Build();
-
-        return config;
+        return rootConfig;
     }
 
     internal static async Task BuildMqttClientPool(

@@ -15,11 +15,6 @@
   },
   "TestSuite": "entityfx.org",
   "TestName": "test_mqtt_load",
-  "TargetScenarios": [
-    "benchmark-qos0-activemq-1c-cl1",
-    "benchmark-qos0-emqx-1c-cl1",
-    "benchmark-qos0-mosquitto-1c-cl1"
-  ],
   "GlobalSettings": {
     "ScenariosSettings": [
       {
@@ -28,7 +23,7 @@
           {
             "KeepConstant": [
               1,
-              "00:01:00"
+              "00:00:10"
             ]
           }
         ],
@@ -47,7 +42,7 @@
           {
             "KeepConstant": [
               1,
-              "00:01:00"
+              "00:00:10"
             ]
           }
         ],
@@ -66,7 +61,7 @@
           {
             "KeepConstant": [
               1,
-              "00:01:00"
+              "00:00:10"
             ]
           }
         ],
@@ -80,8 +75,6 @@
         "MaxFailCount": 500
       }
     ],
-    "ReportFileName": "custom_report_name",
-    "ReportFolder": "./mqtt-reports",
     "ReportFormats": [
       "Html",
       "Txt"

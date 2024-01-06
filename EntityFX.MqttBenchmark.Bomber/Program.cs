@@ -20,22 +20,30 @@ var host = builder.Build();
 var configuration = ScenarioHelper.InitConfiguration(host, args);
 var logger = host.Services.GetRequiredService<ILogger<MqttScenarioBuilder>>();
 
+var availableTests = configuration.GetSection("AvailableTests").Get<string[]>() ?? Array.Empty<string>();
+
 
 InfluxDBSink influxDbSink = new();
-var scenario1 = new MqttScenarioBuilder(logger, configuration);
-//var scenario2 = new MqttScenarioBuilder(logger, configuration);
+var scenarioBuilder = new MqttScenarioBuilder(logger, configuration);
 
-
-NBomberRunner
+foreach (var testName in availableTests)
+{
+    NBomberRunner
     .RegisterScenarios(
-        scenario1.Build("serialize_publish_qos0")/*,
-        scenario2.Build("serialize_publish_qos1")*/
+        scenarioBuilder.Build(testName)
     )
     .LoadInfraConfig("config.json")
     .LoadConfig("config.json")
+    .WithReportFileName(testName)
+    .WithReportFolder(Path.Combine("reports", testName))
     //.WithReportingInterval(TimeSpan.FromSeconds(5))
     //.WithReportingSinks(influxDbSink)
     //.WithTestSuite("reporting")
     //.WithTestName("influx_db_demo")
 
     .Run();
+}
+
+
+
+
