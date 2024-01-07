@@ -31,17 +31,7 @@ var testParams = configuration.GetSection("TestParams").Get<Dictionary<string, D
 var scenarioNameTemplates = configuration.GetSection("ScenarioNameTemplates").Get<Dictionary<string, ScenarioNameTemplate>>()
     ?? new Dictionary<string, ScenarioNameTemplate>();
 
-
-
-var scenarioGroups = scenarioNameTemplates.Select(
-    sn => GetMatchingCombination(sn.Key, sn.Value, testParams)
-    .GroupBy(kv => kv.Value.Params[kv.Value.GroupBy])
-    .ToDictionary(kv => kv.Key,
-        kv => kv.GroupBy(kv1 => kv1.Value.Params[kv1.Value.SubGroupBy])
-        .ToDictionary(kv2 => kv2.Key, kv2 => kv2.ToDictionary(kv3 => kv3.Key, kv3 => kv3.Value))
-    )
-    ).ToArray();
-
+var scenarioGroups = GroupScenarioTemplates(testParams, scenarioNameTemplates);
 
 var configTemplateFile = File.ReadAllText("config.template.json");
 
@@ -62,11 +52,15 @@ foreach (var scenarioGroup in scenarioGroups)
                 var server = new Uri(kv.Value.Server);
                 var st = (ScenarioTemplate)scenarioTemplates[kv.Value.ScenarioTemplateName].Clone();
                 st.ScenarioName = kv.Key;
-                st.CustomSettings.Server = server.Host;
-                st.CustomSettings.Port = server.Port;
-                st.CustomSettings.Topic = kv.Value.Topic;
-                st.CustomSettings.Qos = Convert.ToInt32(kv.Value.Params["qos"]);
-                st.CustomSettings.ClientsCount = Convert.ToInt32(kv.Value.Params["clients"]);
+                st.CustomSettings = new ScenarioTemplate.CustomSettingsTemplate()
+                {
+                    Server = server.Host,
+                    Port = server.Port,
+                    Topic = kv.Value.Topic,
+                    Qos = Convert.ToInt32(kv.Value.Params["qos"]),
+                    ClientsCount = Convert.ToInt32(kv.Value.Params["clients"])
+                };
+
                 return st;
             }).ToArray();
 
@@ -98,26 +92,6 @@ foreach (var scenarioGroup in scenarioGroups)
 }
 
 
-
-
-
-//foreach (var testName in scenarioNameTemplates)
-//{
-//    NBomberRunner
-//    .RegisterScenarios(
-//        testName.Value.Select(t => scenarioBuilder.Build(t)).ToArray()
-//    )
-//    .LoadInfraConfig("config.json")
-//    .LoadConfig("config.json")
-//    .WithReportFileName(testName.Key)
-//    .WithReportFolder(Path.Combine("reports", testName.Key))
-//    //.WithReportingInterval(TimeSpan.FromSeconds(5))
-//    //.WithReportingSinks(influxDbSink)
-//    //.WithTestSuite("reporting")
-//    //.WithTestName("influx_db_demo")
-
-//    .Run();
-//}
 
 string ReplaceParams(string replaceString, Dictionary<string, object[]> testParams, out Dictionary<string, object> outParams)
 {
@@ -207,7 +181,7 @@ Dictionary<string, ScenarioParamsTemplate> GetMatchingCombination(string replace
         outParams.Add(resultstring, paramsAsDir);
     }
 
-    return outParams.ToDictionary(kv => kv.Key, kv => new ScenarioParamsTemplate()
+    var combination = outParams.ToDictionary(kv => kv.Key, kv => new ScenarioParamsTemplate()
     {
         Params = kv.Value,
         Group = ReplaceValueParams(value.Group, testParams, kv.Value),
@@ -217,4 +191,18 @@ Dictionary<string, ScenarioParamsTemplate> GetMatchingCombination(string replace
         Topic = ReplaceValueParams(value.Topic, testParams, kv.Value),
         ScenarioTemplateName = value.ScenarioTemplateName
     });
+
+    return combination;
+}
+
+Dictionary<object, Dictionary<object, Dictionary<string, ScenarioParamsTemplate>>>[] GroupScenarioTemplates(Dictionary<string, Dictionary<string, object>> testParams, Dictionary<string, ScenarioNameTemplate> scenarioNameTemplates)
+{
+    return scenarioNameTemplates.Select(
+        sn => GetMatchingCombination(sn.Key, sn.Value, testParams)
+        .GroupBy(kv => kv.Value.Params[kv.Value.GroupBy])
+        .ToDictionary(kv => kv.Key,
+            kv => kv.GroupBy(kv1 => kv1.Value.Params[kv1.Value.SubGroupBy])
+            .ToDictionary(kv2 => kv2.Key, kv2 => kv2.ToDictionary(kv3 => kv3.Key, kv3 => kv3.Value))
+        )
+        ).ToArray();
 }
