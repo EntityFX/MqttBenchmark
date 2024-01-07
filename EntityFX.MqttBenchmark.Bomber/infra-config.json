@@ -1,0 +1,16 @@
+{
+  "InfluxDBSink": {
+    "Url": "http://10.10.166.28:8086",
+    "_Token": "N3Z_uUDSQ61qVp93K5dNzH3rbNcKxtphDLrjfS_DcX2cdTr3nR2pOlixGCx6HQ8VI66nqnyztOlPFoWFXoe62Q==",
+    "UserName": "superuser",
+    "Password": "Passw0rd!",
+    "Org": "MyOrg",
+    "Bucket": "NBomber",
+    "CustomTags": [
+      {
+        "Key": "environment",
+        "Value": "linux"
+      }
+    ]
+  }
+}

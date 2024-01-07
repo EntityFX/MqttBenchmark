@@ -1,0 +1,12 @@
+{
+  "TestSuite": "entityfx.org",
+  "TestName": "test_mqtt_load",
+  "GlobalSettings": {
+    "ScenariosSettings": [],
+    "ReportFormats": [
+      "Html",
+      "Txt"
+    ],
+    "ReportingInterval": "00:00:05"
+  }
+}
