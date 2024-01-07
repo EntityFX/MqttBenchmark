@@ -4,8 +4,8 @@
     "LoadSimulationsSettings": [
       {
         "KeepConstant": [
-          1,
-          "00:00:30"
+          -1,
+          "00:00:10"
         ]
       }
     ],

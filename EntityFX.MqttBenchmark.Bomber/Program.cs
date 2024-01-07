@@ -39,7 +39,7 @@ var scenariosTemplateFile = File.ReadAllText("scenarios.template.json");
 var scenarioTemplates = JsonSerializer.Deserialize<Dictionary<string, ScenarioTemplate>>(scenariosTemplateFile);
 
 InfluxDBSink influxDbSink = new();
-var scenarioBuilder = new MqttScenarioBuilder(logger, configuration);
+
 
 foreach (var scenarioGroup in scenarioGroups)
 {
@@ -60,7 +60,7 @@ foreach (var scenarioGroup in scenarioGroups)
                     Qos = Convert.ToInt32(kv.Value.Params["qos"]),
                     ClientsCount = Convert.ToInt32(kv.Value.Params["clients"])
                 };
-
+                st.LoadSimulationsSettings[0].KeepConstant[0] = st.CustomSettings.ClientsCount;
                 return st;
             }).ToArray();
 
@@ -80,7 +80,7 @@ foreach (var scenarioGroup in scenarioGroups)
 
             NBomberRunner
                 .RegisterScenarios(
-                    scenarioSubSubGroup.Keys.Select(s => scenarioBuilder.Build(s)).ToArray()
+                    scenarioSubSubGroup.Keys.Select(s => new MqttScenarioBuilder(logger, configuration).Build(s)).ToArray()
                 )
                 .LoadInfraConfig("infra-config.json")
                 .LoadConfig(fileName)
