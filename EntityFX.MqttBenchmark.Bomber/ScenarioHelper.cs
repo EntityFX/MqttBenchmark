@@ -30,10 +30,18 @@ static class ScenarioHelper
             var mqttClientOptions = new MqttClientOptionsBuilder()
                 .WithTcpServer(settings.Server, settings.Port)
                 .Build();
+            try
+            {
 
-            await mqttClient.ConnectAsync(mqttClientOptions, CancellationToken.None);
-            
-            clientPool.AddClient((mqttClient, settings));
+                await mqttClient.ConnectAsync(mqttClientOptions, CancellationToken.None);
+
+                clientPool.AddClient((mqttClient, settings));
+            }
+            catch (Exception)
+            {
+                Console.WriteLine($"Error connect {settings.Server}:{settings.Port}");
+            }
+
         }
     }
 }
