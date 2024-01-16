@@ -5,7 +5,7 @@ record TotalResults(
     decimal Ratio,
     long Successes,
     long Failures,
-    TimeSpan TotalRunTime,
+    TimeSpan TotalPublishTime,
     TimeSpan TestTime,
     TimeSpan AverageRunTime,
     TimeSpan MessageTimeMin,

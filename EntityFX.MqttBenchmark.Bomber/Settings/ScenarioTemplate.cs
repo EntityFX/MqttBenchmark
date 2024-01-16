@@ -20,6 +20,8 @@ namespace EntityFX.MqttBenchmark.Bomber.Settings
             public string Server { get; set; }
 
             public int Port { get; set; }
+
+            public int MessageSize { get; set; }
         }
 
         internal class LoadSimulationsSettingsTemplate

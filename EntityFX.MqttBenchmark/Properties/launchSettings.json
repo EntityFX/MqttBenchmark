@@ -3,7 +3,8 @@
     "EntityFX.MqttBenchmark": {
       "commandName": "Project",
       "environmentVariables": {
-        "DOTNET_ENVIRONMENT": "Development"
+        "DOTNET_ENVIRONMENT": "Production",
+        "__DOTNET_ENVIRONMENT": "Development"
       }
     }
   }

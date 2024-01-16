@@ -60,7 +60,7 @@ static class ResultsHelper
                 $"{tr.Failures,8}", 
                 $"{tr.TotalBytesSent,15:N0}", 
                 $"{runResult.ClientsCount,13:N0}", 
-                $"{tr.TotalRunTime, 10:hh\\:mm\\:ss}",
+                $"{tr.TotalPublishTime, 10:hh\\:mm\\:ss}",
                 $"{tr.TestTime, 10:hh\\:mm\\:ss}",
             };
             sb.AppendLine($"| {string.Join(" | ", rowItems)} |");
@@ -77,6 +77,8 @@ static class ResultsHelper
         {
             "Test", "Address", "Topic", "Qos", 
             "Msg per sec",  "Successes", "Failures", "Total bytes",
+            "Clients count", "Total publish time", "Test time",
+            "Message min time", "Message max time", "Message mean"
         };
         sb.AppendLine(string.Join(",", headers));
         
@@ -85,10 +87,20 @@ static class ResultsHelper
             var tr = runResult.TotalResults;
             var rowItems = new[]
             {
-                $"{runResult.TestName}", $"{runResult.Settings.Broker}", 
-                $"{runResult.Settings.Topic}", $"{runResult.Settings.Qos}",
-                FormattableString.Invariant($"{tr.MessagesPerSecond}"), $"{tr.Successes}", $"{tr.Failures}",
-                $"{tr.TotalBytesSent}" 
+                $"{runResult.TestName}", 
+                $"{runResult.Settings.Broker}", 
+                $"{runResult.Settings.Topic}", 
+                $"{runResult.Settings.Qos}",
+                FormattableString.Invariant($"{tr.MessagesPerSecond}"), 
+                $"{tr.Successes}", 
+                $"{tr.Failures}",
+                $"{tr.TotalBytesSent}",
+                $"{runResult.ClientsCount}",
+                $"{tr.TotalPublishTime}",
+                $"{tr.TestTime}",
+                $"{tr.MessageTimeMin}",
+                $"{tr.MessageTimeMax}",
+                $"{tr.MessageTimeMeanAvg}",
             };
             sb.AppendLine(string.Join(",", rowItems));
         }

@@ -91,27 +91,27 @@ class MqttBenchmark
 
         msgSw.Start();
 
-        int succeed = 0;
-        int failed = 0;
-        int total = 0;
+        long succeed = 0;
+        long failed = 0;
+        long total = 0;
         bool end = false;
-        int totalBytes = 0;
+        long totalBytes = 0;
+
+        TimeSpan elapsed = TimeSpan.Zero;
 
         while (!end)
         {
             var message = BuildMessage();
 
-            msgSw.Restart();
-
             try
             {
-                var reasonCode = (await mqttClient.PublishAsync(message)).ReasonCode;
-
-                if (reasonCode == MqttClientPublishReasonCode.Success)
+                msgSw.Restart();
+                var reasult = await mqttClient.PublishAsync(message);
+                elapsed = msgSw.Elapsed;
+                if (reasult.ReasonCode == MqttClientPublishReasonCode.Success)
                 {
                     succeed++;
                     totalBytes += message.Payload.Length;
-                    msgTimings.Add(msgSw.Elapsed);
                 }
                 else
                 {
@@ -120,11 +120,13 @@ class MqttBenchmark
             }
             catch (Exception)
             {
+                elapsed = msgSw.Elapsed;
                 failed++;
             }
             finally
             {
-                duration += msgSw.Elapsed;
+                duration += elapsed;
+                msgTimings.Add(elapsed);
             }
 
             if ((_settings.MessageCount != null && total >= _settings.MessageCount - 1)
@@ -140,8 +142,8 @@ class MqttBenchmark
             mqttClient.Options.ClientId, duration, succeed, failed, totalBytes);
     }
 
-    private RunResults GetResults(List<TimeSpan> msgTimings, int count,
-        string clientId, TimeSpan duration, int succeed, int failed, int totalBytes)
+    private RunResults GetResults(List<TimeSpan> msgTimings, long count,
+        string clientId, TimeSpan duration, long succeed, long failed, long totalBytes)
     {
         if (msgTimings?.Any() != true)
         {

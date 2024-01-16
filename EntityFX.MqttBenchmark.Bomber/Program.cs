@@ -8,6 +8,7 @@ using NBomber.Configuration;
 using NBomber.CSharp;
 using NBomber.Sinks.InfluxDB;
 using System.Collections;
+using System.Globalization;
 using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -40,6 +41,8 @@ var scenarioTemplates = JsonSerializer.Deserialize<Dictionary<string, ScenarioTe
 
 InfluxDBSink influxDbSink = new();
 
+var startTimePath = DateTime.Now.ToString("s", CultureInfo.InvariantCulture).Replace(":", "_");
+var aggregatedReportSink = new AggregatedReportSink();
 
 foreach (var scenarioGroup in scenarioGroups)
 {
@@ -58,7 +61,8 @@ foreach (var scenarioGroup in scenarioGroups)
                     Port = server.Port,
                     Topic = kv.Value.Topic,
                     Qos = Convert.ToInt32(kv.Value.Params["qos"]),
-                    ClientsCount = Convert.ToInt32(kv.Value.Params["clients"])
+                    ClientsCount = Convert.ToInt32(kv.Value.Params["clients"]),
+                    MessageSize = kv.Value.MessageSize
                 };
                 st.LoadSimulationsSettings[0].KeepConstant[0] = st.CustomSettings.ClientsCount;
                 return st;
@@ -78,6 +82,8 @@ foreach (var scenarioGroup in scenarioGroups)
 
             File.WriteAllText(fileName, newTemplate);
 
+
+
             NBomberRunner
                 .RegisterScenarios(
                     scenarioSubSubGroup.Keys.Select(s => new MqttScenarioBuilder(logger, configuration).Build(s)).ToArray()
@@ -85,11 +91,15 @@ foreach (var scenarioGroup in scenarioGroups)
                 .LoadInfraConfig("infra-config.json")
                 .LoadConfig(fileName)
                 .WithReportFileName(firstTest)
-                .WithReportFolder(Path.Combine("reports", firstTest))
+                .WithReportFolder(Path.Combine("reports", startTimePath, firstTest))
+                .WithReportingSinks(aggregatedReportSink)
                 .Run();
         }
     }
 }
+
+var allStats = JsonSerializer.Serialize(aggregatedReportSink.AllNodeStats, new JsonSerializerOptions() { WriteIndented = true });
+File.WriteAllText(Path.Combine("reports", startTimePath, "results.json"), allStats);
 
 
 
@@ -189,7 +199,8 @@ Dictionary<string, ScenarioParamsTemplate> GetMatchingCombination(string replace
         SubGroupBy = value.SubGroupBy,
         Server = ReplaceValueParams(value.Server, testParams, kv.Value),
         Topic = ReplaceValueParams(value.Topic, testParams, kv.Value),
-        ScenarioTemplateName = value.ScenarioTemplateName
+        ScenarioTemplateName = value.ScenarioTemplateName,
+        MessageSize = value.MessageSize
     });
 
     return combination;

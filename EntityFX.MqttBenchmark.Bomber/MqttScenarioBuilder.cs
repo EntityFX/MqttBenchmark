@@ -23,25 +23,26 @@ class MqttScenarioBuilder
 
     public ScenarioProps Build(string name)
     {
-        var message = StringHelper.GetString(256);
-
         var scenario = Scenario.Create(name, async context =>
         {
             var poolItem = _clientPool.GetClient(context.ScenarioInfo);
-            
+
+            var message = StringHelper.GetString(poolItem.MqttScenarioSettings.MessageSize);
+
             var applicationMessage = new MqttApplicationMessageBuilder()
                 .WithTopic(poolItem.MqttScenarioSettings.Topic)
                 .WithQualityOfServiceLevel(poolItem.MqttScenarioSettings.Qos)
                 .WithPayload(message)
                 .Build();
-            var length = applicationMessage!.Payload.Length;
 
+            var sizeBytes = poolItem.MqttScenarioSettings.MessageSize;
 
             var sendStep = await Step.Run("publish", context, async () =>
             {
 
-                await poolItem.mqttClient.PublishAsync(applicationMessage, CancellationToken.None);
-                return Response.Ok(sizeBytes: length);
+                var result = await poolItem.mqttClient.PublishAsync(applicationMessage, CancellationToken.None);
+                return result.IsSuccess ? Response.Ok(sizeBytes: sizeBytes) :
+                    Response.Fail(result.ReasonCode.ToString(), result.ReasonString, sizeBytes);
             });
 
             return sendStep;
@@ -51,12 +52,12 @@ class MqttScenarioBuilder
 
         return scenario;
     }
-    
+
     private Task Init(IScenarioInitContext arg)
     {
         var settings = arg.CustomSettings.Get<MqttScenarioSettings>()
-            ?? new MqttScenarioSettings("test", MQTTnet.Protocol.MqttQualityOfServiceLevel.AtMostOnce, 
-            "localhost", 1883, 50
+            ?? new MqttScenarioSettings("test", MQTTnet.Protocol.MqttQualityOfServiceLevel.AtMostOnce,
+            "localhost", 1883, 50, 1024
             );
 
         return ScenarioHelper.BuildMqttClientPool(_clientPool, settings);
