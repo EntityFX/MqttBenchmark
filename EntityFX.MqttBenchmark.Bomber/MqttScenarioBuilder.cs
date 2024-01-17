@@ -25,6 +25,11 @@ class MqttScenarioBuilder
     {
         var scenario = Scenario.Create(name, async context =>
         {
+            if (!_clientPool.Clients.Any())
+            {
+                return Response.Fail("No connection", "No connection", 0);
+            }
+
             var poolItem = _clientPool.GetClient(context.ScenarioInfo);
 
             var message = StringHelper.GetString(poolItem.MqttScenarioSettings.MessageSize);
@@ -48,9 +53,19 @@ class MqttScenarioBuilder
             return sendStep;
         })
         .WithoutWarmUp()
-        .WithInit(Init);
+        .WithInit(Init)
+        .WithClean(Clean);
 
         return scenario;
+    }
+
+    private async Task Clean(IScenarioInitContext context)
+    {
+        foreach (var client in _clientPool.Clients)
+        {
+            await client.mqttClient.DisconnectAsync();
+        }
+        _clientPool.DisposeClients();
     }
 
     private Task Init(IScenarioInitContext arg)

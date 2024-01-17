@@ -1,0 +1,22 @@
+{
+  "KeepConstant": {
+    "ScenarioName": "",
+    "LoadSimulationsSettings": [
+      {
+        "KeepConstant": [
+          -1,
+          "00:01:00"
+        ]
+      }
+    ],
+    "CustomSettings": {
+      "topic": "",
+      "qos": -1,
+      "clientsCount": -1,
+      "server": "",
+      "port": -1,
+      "messageSize" :  256
+    },
+    "MaxFailCount": 500
+  }
+}

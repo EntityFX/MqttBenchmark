@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using NBomber.Configuration;
+using NBomber.Contracts.Stats;
 using NBomber.CSharp;
 using NBomber.Sinks.InfluxDB;
 using System.Collections;
@@ -32,11 +33,13 @@ var testParams = configuration.GetSection("TestParams").Get<Dictionary<string, D
 var scenarioNameTemplates = configuration.GetSection("ScenarioNameTemplates").Get<Dictionary<string, ScenarioNameTemplate>>()
     ?? new Dictionary<string, ScenarioNameTemplate>();
 
+var templateFiles = configuration.GetSection("TemplateFiles").Get<Dictionary<string, string>>() ?? new Dictionary<string, string>();
+
 var scenarioGroups = GroupScenarioTemplates(testParams, scenarioNameTemplates);
 
-var configTemplateFile = File.ReadAllText("config.template.json");
+var configTemplateFile = File.ReadAllText(templateFiles.GetValueOrDefault("Config", "config.template.json"));
+var scenariosTemplateFile = File.ReadAllText(templateFiles.GetValueOrDefault("Scenarios", "scenarios.template.json"));
 
-var scenariosTemplateFile = File.ReadAllText("scenarios.template.json");
 var scenarioTemplates = JsonSerializer.Deserialize<Dictionary<string, ScenarioTemplate>>(scenariosTemplateFile);
 
 InfluxDBSink influxDbSink = new();
@@ -98,10 +101,11 @@ foreach (var scenarioGroup in scenarioGroups)
     }
 }
 
-var allStats = JsonSerializer.Serialize(aggregatedReportSink.AllNodeStats, new JsonSerializerOptions() { WriteIndented = true });
-File.WriteAllText(Path.Combine("reports", startTimePath, "results.json"), allStats);
+var resultsCsv = aggregatedReportSink.AsCsv();
+File.WriteAllText(Path.Combine("reports", startTimePath, "results.csv"), resultsCsv);
 
-
+var resultsMd = aggregatedReportSink.AsMd();
+File.WriteAllText(Path.Combine("reports", startTimePath, "results.md"), resultsMd);
 
 string ReplaceParams(string replaceString, Dictionary<string, object[]> testParams, out Dictionary<string, object> outParams)
 {

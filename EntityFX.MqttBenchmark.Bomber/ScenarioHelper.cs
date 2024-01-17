@@ -18,24 +18,25 @@ static class ScenarioHelper
     }
 
     internal static async Task BuildMqttClientPool(
-        ClientPool<(IMqttClient mqttClient, MqttScenarioSettings MqttScenarioSettings)> clientPool, 
+        ClientPool<(IMqttClient mqttClient, MqttScenarioSettings MqttScenarioSettings)> clientPool,
         MqttScenarioSettings settings)
     {
         var mqttFactory = new MqttFactory();
 
         for (int i = 0; i < settings.ClientsCount; i++)
         {
-            var mqttClient = mqttFactory.CreateMqttClient();
-
             var mqttClientOptions = new MqttClientOptionsBuilder()
-                .WithTcpServer(settings.Server, settings.Port)
-                .Build();
+            .WithTcpServer(settings.Server, settings.Port)
+            .WithTimeout(TimeSpan.FromSeconds(45))
+            .Build();
             try
             {
-
-                await mqttClient.ConnectAsync(mqttClientOptions, CancellationToken.None);
-
-                clientPool.AddClient((mqttClient, settings));
+                var mqttClient = mqttFactory.CreateMqttClient();
+                var result = await mqttClient.ConnectAsync(mqttClientOptions, CancellationToken.None);
+                if (result?.ResultCode == MqttClientConnectResultCode.Success)
+                {
+                    clientPool.AddClient((mqttClient, settings));
+                }
             }
             catch (Exception)
             {
