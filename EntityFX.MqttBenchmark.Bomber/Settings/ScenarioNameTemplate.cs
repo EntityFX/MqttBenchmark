@@ -1,7 +1,7 @@
 ﻿namespace EntityFX.MqttBenchmark.Bomber.Settings
 {
 
-    internal class ScenarioNameTemplate
+    public class ScenarioNameTemplate
     {
         public string Group { get; set; }
 

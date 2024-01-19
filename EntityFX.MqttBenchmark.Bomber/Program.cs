@@ -71,7 +71,9 @@ foreach (var scenarioGroup in scenarioGroups)
                 return st;
             }).ToArray();
 
-            var firstTest = scenarioSubSubGroup.FirstOrDefault().Value.Group;
+            var scenarioParamsTemplate = scenarioSubSubGroup.FirstOrDefault().Value;
+
+            var firstTest = scenarioParamsTemplate.Group;
 
             var configTemplateJson = JsonSerializer.Deserialize<JsonObject>(configTemplateFile);
 
@@ -95,7 +97,7 @@ foreach (var scenarioGroup in scenarioGroups)
                 .LoadConfig(fileName)
                 .WithReportFileName(firstTest)
                 .WithReportFolder(Path.Combine("reports", startTimePath, firstTest))
-                .WithReportingSinks(aggregatedReportSink)
+                .WithReportingSinks(aggregatedReportSink.WithScenarioParams(scenarioParamsTemplate))
                 .Run();
         }
     }

@@ -1,4 +1,5 @@
-﻿using Microsoft.Extensions.Configuration;
+﻿using EntityFX.MqttBenchmark.Bomber.Settings;
+using Microsoft.Extensions.Configuration;
 using NBomber.Contracts;
 using NBomber.Contracts.Stats;
 using System.Globalization;
@@ -8,7 +9,9 @@ namespace EntityFX.MqttBenchmark.Bomber;
 
 public class AggregatedReportSink : IReportingSink
 {
-    public Dictionary<string, NodeStats> AllNodeStats { get; } = new Dictionary<string, NodeStats>();
+    private ScenarioParamsTemplate? scenarioParamsTemplate;
+
+    public Dictionary<string, (NodeStats NodeStats, ScenarioParamsTemplate? Params)> AllNodeStats { get; } = new Dictionary<string, (NodeStats NodeStats, ScenarioParamsTemplate Params)>();
 
     public string SinkName => nameof(AggregatedReportSink);
 
@@ -23,7 +26,7 @@ public class AggregatedReportSink : IReportingSink
 
     public Task SaveFinalStats(NodeStats stats)
     {
-        AllNodeStats.Add(stats.TestInfo.SessionId, stats);
+        AllNodeStats.Add(stats.TestInfo.SessionId, (stats, scenarioParamsTemplate));
         return Task.CompletedTask;
     }
 
@@ -45,10 +48,13 @@ public class AggregatedReportSink : IReportingSink
     public string AsCsv()
     {
         var allStats = AllNodeStats.SelectMany(
-            nodeStat => nodeStat.Value.ScenarioStats.Select(
+            nodeStat => nodeStat.Value.NodeStats.ScenarioStats.Select(
                 ss => ss.StepStats.Where(sts => sts.StepName == "publish")?.Select(sts => new Dictionary<string, object>()
                 {
                     ["scenario"] = ss.ScenarioName,
+                    ["params_qos"] = nodeStat.Value.Params?.Params?.GetValueOrDefault("qos", -1) ?? -1,
+                    ["params_clients"] = nodeStat.Value.Params?.Params?.GetValueOrDefault("clients", -1) ?? -1,
+                    ["params_message_size"] = nodeStat.Value.Params?.MessageSize ?? -1,
                     ["duration"] = ss.Duration,
                     ["step_name"] = sts.StepName,
                     ["request_count"] = sts.Ok.Request.Count + sts.Fail.Request.Count,
@@ -84,10 +90,13 @@ public class AggregatedReportSink : IReportingSink
     public string AsMd()
     {
         var allStats = AllNodeStats.SelectMany(
-            nodeStat => nodeStat.Value.ScenarioStats.Select(
+            nodeStat => nodeStat.Value.NodeStats.ScenarioStats.Select(
                 ss => ss.StepStats.Where(sts => sts.StepName == "publish")?.Select(sts => new Dictionary<string, object>()
                 {
                     ["scenario"] = ss.ScenarioName,
+                    ["params_qos"] = nodeStat.Value.Params?.Params?.GetValueOrDefault("qos", -1) ?? -1,
+                    ["params_clients"] = nodeStat.Value.Params?.Params?.GetValueOrDefault("clients", -1) ?? -1,
+                    ["params_message_size"] = nodeStat.Value.Params?.MessageSize ?? -1,
                     ["duration"] = ss.Duration,
                     ["step_name"] = sts.StepName,
                     ["request_count"] = sts.Ok.Request.Count + sts.Fail.Request.Count,
@@ -120,5 +129,10 @@ public class AggregatedReportSink : IReportingSink
         return sb.ToString();
     }
 
+    internal IReportingSink WithScenarioParams(ScenarioParamsTemplate scenarioParamsTemplate)
+    {
+        this.scenarioParamsTemplate = scenarioParamsTemplate;
 
+        return this;
+    }
 }
