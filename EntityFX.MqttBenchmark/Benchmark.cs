@@ -52,9 +52,9 @@ class Benchmark
             return Enumerable.Empty<BenchmarkResults>();
         }
 
-        if (_testSettings?.Tests.Any() == true)
+        if (_testSettings?.Scenarios.Any() == true)
         {
-            return _testSettings.Tests.SelectMany(
+            return _testSettings.Scenarios.SelectMany(
                     test =>
                     {
                         GC.Collect();

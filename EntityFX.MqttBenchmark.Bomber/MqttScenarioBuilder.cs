@@ -11,10 +11,10 @@ namespace EntityFX.MqttBenchmark.Bomber;
 class MqttScenarioBuilder
 {
     private readonly ClientPool<(IMqttClient mqttClient, MqttScenarioSettings MqttScenarioSettings)> _clientPool;
-    private readonly ILogger<MqttScenarioBuilder> _logger;
+    private readonly ILogger _logger;
 
     public MqttScenarioBuilder(
-        ILogger<MqttScenarioBuilder> logger,
+        ILogger logger,
         IConfiguration configuration)
     {
         _logger = logger;

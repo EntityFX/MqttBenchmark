@@ -6,7 +6,6 @@ using System.Threading.Tasks;
 
 namespace EntityFX.MqttBenchmark.Bomber.Settings
 {
-
     internal class ScenarioTemplate : ICloneable
     {
         internal class CustomSettingsTemplate
