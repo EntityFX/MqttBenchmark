@@ -22,16 +22,16 @@
     <None Update="Run.ps1">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-    <None Update="templates\scenarios_m1024_t10.template.json">
+    <None Update="templates\scenarios_m16_t10.template.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
     <None Update="templates\scenarios_m256_t10.template.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-    <None Update="templates\scenarios_m1024_t210.template.json">
+    <None Update="templates\scenarios_m16_t180.template.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-    <None Update="templates\scenarios_m256_t210.template.json">
+    <None Update="templates\scenarios_m256_t180.template.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
     <None Update="templates\scenarios_m256_t60.template.json">

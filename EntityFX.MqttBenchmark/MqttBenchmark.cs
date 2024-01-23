@@ -85,6 +85,7 @@ class MqttBenchmark
     private async Task<RunResults> SendMessages(IMqttClient mqttClient)
     {
         TimeSpan duration = TimeSpan.Zero;
+        TimeSpan successDuration = TimeSpan.Zero;
         var msgSw = new Stopwatch();
 
         var msgTimings = new List<TimeSpan>();
@@ -108,6 +109,7 @@ class MqttBenchmark
                 msgSw.Restart();
                 var reasult = await mqttClient.PublishAsync(message);
                 elapsed = msgSw.Elapsed;
+                successDuration += elapsed;
                 if (reasult.ReasonCode == MqttClientPublishReasonCode.Success)
                 {
                     succeed++;
@@ -139,7 +141,7 @@ class MqttBenchmark
         }
 
         return GetResults(msgTimings, total,
-            mqttClient.Options.ClientId, duration, succeed, failed, totalBytes);
+            mqttClient.Options.ClientId, successDuration, succeed, failed, totalBytes);
     }
 
     private RunResults GetResults(List<TimeSpan> msgTimings, long count,
@@ -160,7 +162,7 @@ class MqttBenchmark
             msgTimings.Max(),
             TimeSpan.FromMilliseconds(msgTimings.Average(s => s.TotalMilliseconds)),
             (decimal)standardDeviation,
-            (decimal)(count / duration.TotalSeconds), totalBytes
+            (decimal)(duration > TimeSpan.Zero ? (succeed / duration.TotalSeconds) : 0), totalBytes
         );
     }
 

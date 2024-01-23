@@ -5,7 +5,7 @@
       {
         "KeepConstant": [
           -1,
-          "00:02:30"
+          "00:02:00"
         ]
       }
     ],
@@ -15,7 +15,7 @@
       "clientsCount": -1,
       "server": "",
       "port": -1,
-      "messageSize" :  1024
+      "messageSize" :  256
     },
     "MaxFailCount": 500
   }

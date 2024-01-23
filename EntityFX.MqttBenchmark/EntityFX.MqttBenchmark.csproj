@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
 	<PropertyGroup>
 		<OutputType>Exe</OutputType>
@@ -18,6 +18,10 @@
 	  </None>
 	  <None Update="appsettings.Development.json">
 	    <DependentUpon>appsettings.json</DependentUpon>
+	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+	  </None>
+	  <None Update="appsettings.MicroTest.json">
+		<DependentUpon>appsettings.json</DependentUpon>
 	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 	  </None>
 	  <None Update="appsettings.Production.json">

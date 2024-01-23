@@ -91,7 +91,7 @@ internal class Benchmark
                     }
                     else
                     {
-                        RunSingle(startTimePath, aggregatedReportSink, scenarioSubSubGroup, scenarioParamsTemplate, firstTest, fileName);
+                        RunSingle(startTimePath, aggregatedReportSink, scenarioSubSubGroup, scenarioParamsTemplate, fileName);
                     }
 
 
@@ -104,9 +104,11 @@ internal class Benchmark
 
         var resultsMd = aggregatedReportSink.AsMd();
         File.WriteAllText(Path.Combine("reports", startTimePath, "results.md"), resultsMd);
+
+        Console.WriteLine(resultsMd);
     }
 
-    private void RunSingle(string startTimePath, AggregatedReportSink aggregatedReportSink, Dictionary<string, ScenarioParamsTemplate> scenarioSubSubGroup, ScenarioParamsTemplate scenarioParamsTemplate, string firstTest, string fileName)
+    private void RunSingle(string startTimePath, AggregatedReportSink aggregatedReportSink, Dictionary<string, ScenarioParamsTemplate> scenarioSubSubGroup, ScenarioParamsTemplate scenarioParamsTemplate, string fileName)
     {
         foreach (var testItem in scenarioSubSubGroup)
         {
@@ -116,8 +118,8 @@ internal class Benchmark
                 )
                 .LoadInfraConfig("infra-config.json")
                 .LoadConfig(fileName)
-                .WithReportFileName(firstTest)
-                .WithReportFolder(Path.Combine("reports", startTimePath, firstTest))
+                .WithReportFileName(testItem.Key)
+                .WithReportFolder(Path.Combine("reports", startTimePath, testItem.Key))
                 .WithReportingSinks(aggregatedReportSink.WithScenarioParams(scenarioParamsTemplate))
                 .Run();
         }
