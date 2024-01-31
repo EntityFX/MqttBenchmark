@@ -63,7 +63,7 @@ internal class Benchmark
                             Topic = kv.Value.Topic,
                             Qos = Convert.ToInt32(kv.Value.Params["qos"]),
                             ClientsCount = Convert.ToInt32(kv.Value.Params["clients"]),
-                            MessageSize = kv.Value.MessageSize
+                            MessageSize = Convert.ToInt32(kv.Value.Params.GetValueOrDefault("message", kv.Value.MessageSize))
                         };
                         st.LoadSimulationsSettings[0].KeepConstant[0] = st.CustomSettings.ClientsCount;
                         return st;
@@ -191,7 +191,7 @@ internal class Benchmark
             Server = ReplaceValueParams(value.Server, testParams, kv.Value),
             Topic = ReplaceValueParams(value.Topic, testParams, kv.Value),
             ScenarioTemplateName = value.ScenarioTemplateName,
-            MessageSize = value.MessageSize
+            MessageSize = ReplaceValueParams(value.MessageSize, testParams, kv.Value),
         });
 
         return combination;

@@ -1,45 +1,56 @@
+Get-Date 
 Write-Host "Run 10 seconds"
 
 Push-Location "EntityFX.MqttBenchmark.Bomber\bin\Release\net6.0\"
 
-Write-Host "Run Bomber - 256 b - 10 s"
-Start-Process -FilePath ".\EntityFX.MqttBenchmark.Bomber.exe" -Wait -ArgumentList "TemplateFiles:Scenarios=templates/scenarios_m256_t10.template.json ScenarioNameTemplates:benchmark-qos{qos}-{servers-1c}-{clients}cl:MessageSize=256 ScenarioNameTemplates:benchmark-qos{qos}-{servers-mc}-{clients}cl:MessageSize=256"
+Get-Date
+Write-Host "Run Bomber - 16 b - 10 s"
+Start-Process -FilePath ".\EntityFX.MqttBenchmark.Bomber.exe" -Wait -ArgumentList "InParallel=true TemplateFiles:Scenarios=templates/scenarios_m16_t10.template.json ScenarioNameTemplates:benchmark-qos{qos}-{servers-1c}-{clients}cl:MessageSize=16 ScenarioNameTemplates:benchmark-qos{qos}-{servers-mc}-{clients}cl:MessageSize=16"
 
-Write-Host "Run Bomber - 1 kb - 10 s"
-Start-Process -FilePath ".\EntityFX.MqttBenchmark.Bomber.exe" -Wait -ArgumentList "TemplateFiles:Scenarios=templates/scenarios_m1024_t10.template.json ScenarioNameTemplates:benchmark-qos{qos}-{servers-1c}-{clients}cl:MessageSize=1024 ScenarioNameTemplates:benchmark-qos{qos}-{servers-mc}-{clients}cl:MessageSize=1024"
+Get-Date
+Write-Host "Run Bomber - 256 b - 10 s"
+Start-Process -FilePath ".\EntityFX.MqttBenchmark.Bomber.exe" -Wait -ArgumentList "InParallel=true TemplateFiles:Scenarios=templates/scenarios_m256_t10.template.json ScenarioNameTemplates:benchmark-qos{qos}-{servers-1c}-{clients}cl:MessageSize=256 ScenarioNameTemplates:benchmark-qos{qos}-{servers-mc}-{clients}cl:MessageSize=256"
 
 Pop-Location
 
 Push-Location "EntityFX.MqttBenchmark\bin\Release\net6.0\"
 
-Write-Host "Run MqttBenchmark - 256 b - 10 s"
-Start-Process -FilePath ".\EntityFX.MqttBenchmark.exe" -Wait -ArgumentList "Tests:Settings:MessageSize=256 Tests:Settings:TestMaxTime=00:00:10"
+Get-Date
+Write-Host "Run MqttBenchmark - 16 b - 10 s"
+Start-Process -FilePath ".\EntityFX.MqttBenchmark.exe" -Wait -ArgumentList "Tests:InParallel=true Tests:Settings:MessageSize=16 Tests:Settings:TestMaxTime=00:00:10"
 
-Write-Host "Run MqttBenchmark - 1 kb - 10 s"
-Start-Process -FilePath ".\EntityFX.MqttBenchmark.exe" -Wait -ArgumentList "Tests:Settings:MessageSize=256 Tests:Settings:TestMaxTime=00:00:10"
+Get-Date
+Write-Host "Run MqttBenchmark - 256 b - 10 s"
+Start-Process -FilePath ".\EntityFX.MqttBenchmark.exe" -Wait -ArgumentList "Tests:InParallel=true Tests:Settings:MessageSize=256 Tests:Settings:TestMaxTime=00:00:10"
 
 Pop-Location
 
-
-Write-Host "Run 210 seconds"
+Get-Date 
+Write-Host "Run 180 seconds"
 
 
 Push-Location "EntityFX.MqttBenchmark.Bomber\bin\Release\net6.0\"
 
-Write-Host "Run Bomber - 256 b - 10 s"
-Start-Process -FilePath ".\EntityFX.MqttBenchmark.Bomber.exe" -Wait -ArgumentList "TemplateFiles:Scenarios=templates/scenarios_m256_t210.template.json ScenarioNameTemplates:benchmark-qos{qos}-{servers-1c}-{clients}cl:MessageSize=256 ScenarioNameTemplates:benchmark-qos{qos}-{servers-mc}-{clients}cl:MessageSize=256"
+Get-Date
+Write-Host "Run Bomber - 16 b - 180 s"
+Start-Process -FilePath ".\EntityFX.MqttBenchmark.Bomber.exe" -Wait -ArgumentList "InParallel=true TemplateFiles:Scenarios=templates/scenarios_m16_t180.template.json ScenarioNameTemplates:benchmark-qos{qos}-{servers-1c}-{clients}cl:MessageSize=16 ScenarioNameTemplates:benchmark-qos{qos}-{servers-mc}-{clients}cl:MessageSize=16"
 
-Write-Host "Run Bomber - 1 kb - 210 s"
-Start-Process -FilePath ".\EntityFX.MqttBenchmark.Bomber.exe" -Wait -ArgumentList "TemplateFiles:Scenarios=templates/scenarios_m1024_t210.template.json ScenarioNameTemplates:benchmark-qos{qos}-{servers-1c}-{clients}cl:MessageSize=1024 ScenarioNameTemplates:benchmark-qos{qos}-{servers-mc}-{clients}cl:MessageSize=1024"
+Get-Date
+Write-Host "Run Bomber - 256 b - 180 s"
+Start-Process -FilePath ".\EntityFX.MqttBenchmark.Bomber.exe" -Wait -ArgumentList "InParallel=true TemplateFiles:Scenarios=templates/scenarios_m256_t180.template.json ScenarioNameTemplates:benchmark-qos{qos}-{servers-1c}-{clients}cl:MessageSize=256 ScenarioNameTemplates:benchmark-qos{qos}-{servers-mc}-{clients}cl:MessageSize=256"
 
 Pop-Location
 
 Push-Location "EntityFX.MqttBenchmark\bin\Release\net6.0\"
 
-Write-Host "Run MqttBenchmark - 256 b - 210 s"
-Start-Process -FilePath ".\EntityFX.MqttBenchmark.exe" -Wait -ArgumentList "Tests:Settings:MessageSize=1024 Tests:Settings:TestMaxTime=00:02:30"
+Get-Date
+Write-Host "Run MqttBenchmark - 16 b - 180 s"
+Start-Process -FilePath ".\EntityFX.MqttBenchmark.exe" -Wait -ArgumentList "Tests:InParallel=true Tests:Settings:MessageSize=16 Tests:Settings:TestMaxTime=00:02:00"
 
-Write-Host "Run MqttBenchmark - 1 kb - 210 s"
-Start-Process -FilePath ".\EntityFX.MqttBenchmark.exe" -Wait -ArgumentList "Tests:Settings:MessageSize=1024 Tests:Settings:TestMaxTime=00:02:30"
+Get-Date
+Write-Host "Run MqttBenchmark - 256 b - 180 s"
+Start-Process -FilePath ".\EntityFX.MqttBenchmark.exe" -Wait -ArgumentList "Tests:InParallel=true Tests:Settings:MessageSize=256 Tests:Settings:TestMaxTime=00:02:00"
 
 Pop-Location
+
+Get-Date 

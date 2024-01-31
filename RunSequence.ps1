@@ -1,4 +1,4 @@
-Get-Date 
+Get-Date
 Write-Host "Run 10 seconds"
 
 Push-Location "EntityFX.MqttBenchmark.Bomber\bin\Release\net6.0\"

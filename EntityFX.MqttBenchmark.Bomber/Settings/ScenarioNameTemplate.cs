@@ -15,6 +15,6 @@
 
         public string ScenarioTemplateName { get; set; }
 
-        public int MessageSize { get; set; }
+        public string MessageSize { get; set; }
     }
 }

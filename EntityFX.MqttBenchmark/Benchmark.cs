@@ -125,6 +125,7 @@ class Benchmark
         setting = setting.OverrideValues(testSettings);
 
         Console.WriteLine($"{DateTime.Now}: Run test {testName}");
+        Console.WriteLine($"{DateTime.Now}: Settings=[Broker={setting.Broker}, Qos={setting.Qos}, MessageSize={setting.MessageSize}, Clients={setting.Clients}]");
 
         var benchmark = new MqttBenchmark(setting);
         var results = await benchmark.Run(testName);

@@ -3,6 +3,14 @@
     "EntityFX.MqttBenchmark.Bomber 256": {
       "commandName": "Project",
       "commandLineArgs": "ScenarioNameTemplates:benchmark-qos{qos}-{servers-1c}-{clients}cl:MessageSize=256"
+    },
+    "EntityFX.MqttBenchmark.Bomber Clients 1 - 10 - 100": {
+      "commandName": "Project",
+      "commandLineArgs": "-c appsettings.c1_10_100.json"
+    },
+    "EntityFX.MqttBenchmark.Bomber Clients Mosquitto": {
+      "commandName": "Project",
+      "commandLineArgs": "-c appsettings.Mosquitto.json"
     }
   }
 }
