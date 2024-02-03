@@ -5,16 +5,28 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
-var testSettings = LoadSettings(args);
-var benchmark = new Benchmark(testSettings);
+var builder = Host.CreateApplicationBuilder(args);
+
+var httpSettings = builder.Configuration.GetSection("HttpClients").Get<Dictionary<string, string>>();
+
+builder.Services.AddHttpClient<MqttCounterClient>(client =>
+    {
+        client.BaseAddress = new Uri(httpSettings.GetValueOrDefault("MqttCounter", "http://localhost:5000"));
+    });
+
+var testSettings = LoadSettings(args, builder, out var serviceProvider);
+
+
+var mqttCounterClient = serviceProvider.GetService<MqttCounterClient>();
+var benchmark = new Benchmark(testSettings, mqttCounterClient);
 
 var result = benchmark.Run();
 
 return result;
 
-TestSettings? LoadSettings(string[] args)
+TestSettings? LoadSettings(string[] args, HostApplicationBuilder builder, out IServiceProvider serviceProvider)
 {
-    var builder = Host.CreateApplicationBuilder(args);
+
 
     var extraConfig = GetExtraConfig(args);
 
@@ -46,6 +58,8 @@ TestSettings? LoadSettings(string[] args)
     }
     Console.WriteLine($"Default clients: {settings.Settings.Clients}");
     Console.WriteLine($"In parallel: {settings.InParallel}");
+
+    serviceProvider = host.Services;
 
     return settings;
 }

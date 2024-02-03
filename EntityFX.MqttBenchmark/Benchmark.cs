@@ -7,11 +7,13 @@ namespace EntityFX.MqttBenchmark;
 class Benchmark
 {
     private readonly TestSettings? _testSettings;
+    private readonly MqttCounterClient mqttCounterClient;
     private readonly string _outputPath;
 
-    public Benchmark(TestSettings? testSettings)
+    public Benchmark(TestSettings? testSettings, MqttCounterClient mqttCounterClient)
     {
         _testSettings = testSettings;
+        this.mqttCounterClient = mqttCounterClient;
         var outputPath = _testSettings.OutputPath;
         _outputPath = Path.Combine(outputPath,
             DateTime.Now.ToString("s", CultureInfo.InvariantCulture)
@@ -51,6 +53,8 @@ class Benchmark
         {
             return Enumerable.Empty<BenchmarkResults>();
         }
+
+        mqttCounterClient.ClearCounters().Wait();
 
         if (_testSettings?.Scenarios.Any() == true)
         {
@@ -130,9 +134,14 @@ class Benchmark
         var benchmark = new MqttBenchmark(setting);
         var results = await benchmark.Run(testName);
 
+        var receivedCounter = await mqttCounterClient.GetCounter(setting!.Broker!.ToString(), setting!.Topic!);
+        results.TotalResults.Received = receivedCounter;
+
         Console.WriteLine($"{DateTime.Now}: Test {testName} complete");
 
         ResultsHelper.StoreResults(results, testName, setting, _outputPath);
+
+        await mqttCounterClient.ClearCounter(setting!.Broker!.ToString(), setting!.Topic!);
 
         return results;
     }

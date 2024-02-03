@@ -18,6 +18,7 @@ static class ResultsHelper
             ["Msg per sec"] = 18,
             ["Successes"] = 9,
             ["Failures"] = 8,
+            ["Received"] = 8,
             ["Total bytes"] = 15,
             ["Total clients"] = 13,
             ["Total time"] = 10,
@@ -58,6 +59,7 @@ static class ResultsHelper
                 $"{tr.MessagesPerSecond,18:N2}", 
                 $"{tr.Successes,9}", 
                 $"{tr.Failures,8}", 
+                $"{tr.Received,8}", 
                 $"{tr.TotalBytesSent,15:N0}", 
                 $"{runResult.ClientsCount,13:N0}", 
                 $"{tr.TotalPublishTime, 10:hh\\:mm\\:ss}",
@@ -76,7 +78,7 @@ static class ResultsHelper
         var headers = new[]
         {
             "Test", "Address", "Topic", "Qos", 
-            "Msg per sec",  "Successes", "Failures", "Total bytes",
+            "Msg per sec",  "Successes", "Failures", "Received", "Total bytes",
             "Clients count", "Total publish time", "Test time",
             "Message min time", "Message max time", "Message mean"
         };
@@ -94,6 +96,7 @@ static class ResultsHelper
                 FormattableString.Invariant($"{tr.MessagesPerSecond}"), 
                 $"{tr.Successes}", 
                 $"{tr.Failures}",
+                $"{tr.Received}",
                 $"{tr.TotalBytesSent}",
                 $"{runResult.ClientsCount}",
                 $"{tr.TotalPublishTime}",

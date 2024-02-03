@@ -1,4 +1,4 @@
-Get-Date
+Get-Date 
 Write-Host "Run 10 seconds"
 
 Push-Location "EntityFX.MqttBenchmark.Bomber\bin\Release\net6.0\"
@@ -45,7 +45,7 @@ Push-Location "EntityFX.MqttBenchmark\bin\Release\net6.0\"
 
 Get-Date
 Write-Host "Run MqttBenchmark - 16 b - 180 s"
-Start-Process -FilePath ".\EntityFX.MqttBenchmark.exe" -Wait -ArgumentList "Tests:InParallel=false Tests:Settings:MessageSize=16 Tests:Settings:TestMaxTime=00:02:00"
+Start-Process -FilePath ".\EntityFX.MqttBenchmark.exe" -Wait -ArgumentList "Tests:InParallel=true Tests:Settings:MessageSize=16 Tests:Settings:TestMaxTime=00:02:00"
 
 Get-Date
 Write-Host "Run MqttBenchmark - 256 b - 180 s"

@@ -49,7 +49,7 @@ class MqttBenchmark
         if (!runResultsArray.Any())
         {
             return new TotalResults(
-                1, 0, 0,
+                1, 0, 0, 0,
                 TimeSpan.Zero,
                 TimeSpan.Zero,
                 TimeSpan.Zero,
@@ -68,7 +68,7 @@ class MqttBenchmark
         var totalBytes = runResultsArray.Sum(r => r.BytesSent);
 
         return new TotalResults(
-            ratio, successes, failures,
+            ratio, successes, failures, 0,
             runResultsArray.Max(r => r.RunTime),
             testTime,
             TimeSpan.FromMilliseconds(runResultsArray.Average(r => r.RunTime.TotalMilliseconds)),
