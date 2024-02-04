@@ -1,3 +1,4 @@
+using System;
 using System.Globalization;
 using System.Text.Json;
 using EntityFX.MqttBenchmark.Helpers;
@@ -43,7 +44,6 @@ class Benchmark
         File.WriteAllText(Path.Combine(_outputPath, "results.csv"), resultsAsCsv);
 
         Console.WriteLine();
-
         return 0;
     }
 
@@ -131,6 +131,7 @@ class Benchmark
         Console.WriteLine($"{DateTime.Now}: Run test {testName}");
         Console.WriteLine($"{DateTime.Now}: Settings=[Broker={setting.Broker}, Qos={setting.Qos}, MessageSize={setting.MessageSize}, Clients={setting.Clients}]");
 
+        await mqttCounterClient.ClearCounter(setting!.Broker!.ToString(), setting!.Topic!);
         var benchmark = new MqttBenchmark(setting);
         var results = await benchmark.Run(testName);
 
@@ -141,7 +142,7 @@ class Benchmark
 
         ResultsHelper.StoreResults(results, testName, setting, _outputPath);
 
-        await mqttCounterClient.ClearCounter(setting!.Broker!.ToString(), setting!.Topic!);
+
 
         return results;
     }

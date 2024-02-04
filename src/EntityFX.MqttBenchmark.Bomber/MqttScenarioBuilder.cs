@@ -5,6 +5,7 @@ using NBomber;
 using NBomber.CSharp;
 using MQTTnet.Client;
 using NBomber.Contracts;
+using EntityFX.MqttBenchmark.Bomber.Settings;
 
 namespace EntityFX.MqttBenchmark.Bomber;
 
@@ -61,6 +62,9 @@ class MqttScenarioBuilder
 
     private async Task Clean(IScenarioInitContext context)
     {
+        var settings = context.CustomSettings.Get<MqttScenarioSettings>();
+        if (settings == null) return;
+
         foreach (var client in _clientPool.Clients)
         {
             await client.mqttClient.DisconnectAsync();
@@ -68,13 +72,15 @@ class MqttScenarioBuilder
         _clientPool.DisposeClients();
     }
 
-    private Task Init(IScenarioInitContext arg)
+    private async Task Init(IScenarioInitContext arg)
     {
         var settings = arg.CustomSettings.Get<MqttScenarioSettings>()
             ?? new MqttScenarioSettings("test", MQTTnet.Protocol.MqttQualityOfServiceLevel.AtMostOnce,
             "localhost", 1883, 50, 1024
             );
 
-        return ScenarioHelper.BuildMqttClientPool(_clientPool, settings);
+        var brokerUrl = (new UriBuilder("mqtt", settings.Server, settings.Port)).Uri;
+
+        await ScenarioHelper.BuildMqttClientPool(_clientPool, settings);
     }
 }

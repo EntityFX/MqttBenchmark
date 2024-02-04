@@ -25,7 +25,7 @@ class MqttBenchmark
 
         var testTimeSw = new Stopwatch();
         testTimeSw.Start();
-
+        var startDateTime = DateTimeOffset.Now;
         var clientTasks = new List<Task<RunResults>>();
         for (var i = 0; i < clients.Count; i++)
         {
@@ -38,8 +38,10 @@ class MqttBenchmark
         var results = await Task.WhenAll(clientTasks);
 
         var totalResults = CalculateTotalResults(results, testTimeSw.Elapsed);
-
-        return new BenchmarkResults(testName, clientsCount, totalResults, results, _settings);
+        var endDateTime = DateTimeOffset.Now;
+        return new BenchmarkResults(
+            testName, clientsCount, totalResults, results, 
+            startDateTime, endDateTime,  _settings);
     }
 
     private TotalResults CalculateTotalResults(IEnumerable<RunResults> runResults, TimeSpan testTime)

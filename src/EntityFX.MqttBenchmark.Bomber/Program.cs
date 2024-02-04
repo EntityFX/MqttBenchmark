@@ -3,6 +3,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using System;
 
 var builder = Host.CreateApplicationBuilder(args);
 
@@ -17,6 +18,13 @@ builder.Configuration
     .AddEnvironmentVariables()
     .AddCommandLine(args);
 
+var httpSettings = builder.Configuration.GetSection("HttpClients").Get<Dictionary<string, string>>();
+
+builder.Services.AddHttpClient<MqttCounterClient>(client =>
+{
+    client.BaseAddress = new Uri(httpSettings.GetValueOrDefault("MqttCounter", "http://localhost:5000"));
+});
+
 Console.WriteLine($"Use config: {appSettingsPath}");
 Console.WriteLine($"Envrionment: {builder.Environment.EnvironmentName}");
 
@@ -27,8 +35,9 @@ var host = builder.Build();
 
 var configuration = ScenarioHelper.InitConfiguration(host, args);
 var logger = host.Services.GetRequiredService<ILogger<MqttScenarioBuilder>>();
+var mqttCounterClient = host.Services.GetService<MqttCounterClient>();
 
-var benchmark = new Benchmark(logger, configuration);
+var benchmark = new Benchmark(logger, configuration, mqttCounterClient);
 benchmark.Run();
 
 string? GetExtraConfig(string[] args)

@@ -2,6 +2,7 @@
 using Microsoft.Extensions.Configuration;
 using NBomber.Contracts;
 using NBomber.Contracts.Stats;
+using System.Data;
 using System.Globalization;
 using System.Text;
 
@@ -10,6 +11,12 @@ namespace EntityFX.MqttBenchmark.Bomber;
 public class AggregatedReportSink : IReportingSink
 {
     private ScenarioParamsTemplate? scenarioParamsTemplate;
+    private readonly MqttCounterClient mqttCounterClient;
+
+    public AggregatedReportSink(MqttCounterClient mqttCounterClient)
+    {
+        this.mqttCounterClient = mqttCounterClient;
+    }
 
     public Dictionary<string, (NodeStats NodeStats, ScenarioParamsTemplate? Params)> AllNodeStats { get; } = new Dictionary<string, (NodeStats NodeStats, ScenarioParamsTemplate Params)>();
 
@@ -21,13 +28,34 @@ public class AggregatedReportSink : IReportingSink
 
     public Task Init(IBaseContext context, IConfiguration infraConfig)
     {
+        //var brokerUrl = (new UriBuilder("mqtt", settings.Server, settings.Port)).Uri;
+
+        // var counter = await _mqttCounterClient.GetCounter(brokerUrl.ToString(), settings.Topic);
+
         return Task.CompletedTask;
     }
 
-    public Task SaveFinalStats(NodeStats stats)
+    public async Task SaveFinalStats(NodeStats stats)
     {
+        var counter = await mqttCounterClient
+            .GetCounter(scenarioParamsTemplate!.Server, scenarioParamsTemplate!.Topic);
+
+
+        var dataSet = new System.Data.DataSet("Counters");
+        var dt = new System.Data.DataTable("Receive");
+        var dc = new DataColumn("ReceiveCounter", typeof(int));
+        dt.Columns.Add(dc);
+        dataSet.Tables.Add(dt);
+
+        var row = dt.NewRow();
+        row["ReceiveCounter"] = counter;
+
+        dt.Rows.Add(row);
+        dataSet.AcceptChanges();
+
+        stats.PluginStats = new DataSet[] { dataSet };
+
         AllNodeStats.Add(stats.TestInfo.SessionId, (stats, scenarioParamsTemplate));
-        return Task.CompletedTask;
     }
 
     public Task SaveRealtimeStats(ScenarioStats[] stats)
@@ -35,9 +63,10 @@ public class AggregatedReportSink : IReportingSink
         return Task.CompletedTask;
     }
 
-    public Task Start()
+    public async Task Start()
     {
-        return Task.CompletedTask;
+        await mqttCounterClient
+            .ClearCounter(scenarioParamsTemplate!.Server, scenarioParamsTemplate!.Topic);
     }
 
     public Task Stop()
