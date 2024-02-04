@@ -25,7 +25,8 @@ var settings = rootConfig.GetSection("Mqtt").Get<MqttSettings[]>();
 ConcurrentDictionary<(string Broker, string Topic), int> countersStore =
     new ConcurrentDictionary<(string, string), int>();
 
-var mqttClients = settings.Select(async s => await ConnectMqttAndSubscribe(s)).Where(mq => mq != null).ToArray();
+var mqttClients = settings.Select(async s => await ConnectMqttAndSubscribe(s))
+    .Where(mq => mq != null).ToArray();
 
 MapApi(app, countersStore);
 
@@ -45,7 +46,7 @@ async Task<IMqttClient?> ConnectMqttAndSubscribe(MqttSettings mqttSettings)
 
     mqttClient.ConnectedAsync += async e =>
     {
-        logger.LogInformation($"Connected to  {mqttSettings.Broker}");
+        logger.LogInformation($"{DateTime.Now}: Connected to  {mqttSettings.Broker}");
         var mqttSubscribeBuider = mqttFactory.CreateSubscribeOptionsBuilder();
         foreach (var topic in mqttSettings.Topics)
         {
@@ -66,7 +67,7 @@ async Task<IMqttClient?> ConnectMqttAndSubscribe(MqttSettings mqttSettings)
     {
         if (e.ClientWasConnected)
         {
-            logger.LogWarning($"Re-connect to {mqttSettings.Broker}");
+            logger.LogWarning($"{DateTime.Now}: Re-connect to {mqttSettings.Broker}");
             await mqttClient.ConnectAsync(mqttClient.Options);
         }
     };
