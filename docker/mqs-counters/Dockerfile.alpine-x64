@@ -1,0 +1,21 @@
+FROM mcr.microsoft.com/dotnet/sdk:6.0-alpine AS build
+WORKDIR /src
+
+COPY src/EntityFX.MqttBenchmark.Counters ./EntityFX.MqttBenchmark.Counters
+WORKDIR /src/EntityFX.MqttBenchmark.Counters/
+RUN dotnet restore -r linux-musl-x64 "EntityFX.MqttBenchmark.Counters.csproj"
+RUN dotnet publish "EntityFX.MqttBenchmark.Counters.csproj" -c Release -o /app/publish -r linux-musl-x64 --self-contained false --no-restore
+
+FROM mcr.microsoft.com/dotnet/aspnet:6.0-alpine-amd64
+WORKDIR /app
+EXPOSE 80
+COPY --from=build /app/publish .
+ENTRYPOINT ["./EntityFX.MqttBenchmark.Counters"]
+
+ENV \
+    DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false \
+    LC_ALL=en_US.UTF-8 \
+    LANG=en_US.UTF-8
+RUN apk add --no-cache \
+    icu-data-full \
+    icu-libs
