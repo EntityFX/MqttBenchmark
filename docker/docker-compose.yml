@@ -1,0 +1,20 @@
+version: "3.3"
+services:
+  mqs-counters:
+    image: mqs-counters
+    container_name: ${DOCKER_REGISTRY-}mqs-counters
+    restart: always
+    build:
+      context: ../
+      dockerfile: docker/mqs-counters/Dockerfile.alpine-x64
+    ports:
+      - 80:80
+    env_file:
+      - mqs-counters/.env
+#    environment:
+#      ASPNETCORE_ENVIRONMENT: Development
+#    networks:
+#      - mqs-net
+
+#networks:
+#  mqs-net: null
