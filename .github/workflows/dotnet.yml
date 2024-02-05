@@ -25,4 +25,4 @@ jobs:
     - name: Build
       run: dotnet build src/EntityFX.MqttBenchmark.sln --no-restore
     - name: Test
-      run: dotnet test --no-build --verbosity normal
+      run: dotnet test src/EntityFX.MqttBenchmark.sln --no-build --verbosity normal
