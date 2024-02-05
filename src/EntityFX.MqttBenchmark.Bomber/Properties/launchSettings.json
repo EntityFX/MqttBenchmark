@@ -1,5 +1,9 @@
 {
   "profiles": {
+    "EntityFX.MqttBenchmark.Bomber Development": {
+      "commandName": "Project",
+      "commandLineArgs": "-c appsettings.Development.json"
+    },
     "EntityFX.MqttBenchmark.Bomber 256": {
       "commandName": "Project",
       "commandLineArgs": "ScenarioNameTemplates:benchmark-qos{qos}-{servers-1c}-{clients}cl:MessageSize=256"

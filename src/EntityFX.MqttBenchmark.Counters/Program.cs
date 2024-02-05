@@ -65,10 +65,15 @@ async Task<IMqttClient?> ConnectMqttAndSubscribe(MqttSettings mqttSettings)
 
     mqttClient.DisconnectedAsync += async e =>
     {
-        if (e.ClientWasConnected)
+        await Task.Delay(TimeSpan.FromSeconds(5));
+        try
         {
             logger.LogWarning($"{DateTime.Now}: Re-connect to {mqttSettings.Broker}");
             await mqttClient.ConnectAsync(mqttClient.Options);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex.Message);
         }
     };
 
@@ -84,7 +89,7 @@ async Task<IMqttClient?> ConnectMqttAndSubscribe(MqttSettings mqttSettings)
     }
     catch (Exception e)
     {
-        logger.LogError(e, e.Message);
+        logger.LogError(e.Message);
         return null;
     }
 
@@ -117,6 +122,12 @@ void MapApi(WebApplication app, ConcurrentDictionary<(string Broker, string Topi
         return countersStore
         .GroupBy(kv => kv.Key.Broker)
         .ToDictionary(kv => kv.Key, kv => kv.ToDictionary(kv1 => kv1.Key.Topic, kv1 => kv1.Value));
+    });
+
+    app.MapGet("/status", () =>
+    {
+        return mqttClients.Where(c => c.Result != null).Select(c => c.Result)
+        .ToDictionary(k => k.Options.ChannelOptions.ToString(), k => k.IsConnected);
     });
 
     app.MapDelete("/counter/{broker}/{topic}", (string broker, string topic) =>

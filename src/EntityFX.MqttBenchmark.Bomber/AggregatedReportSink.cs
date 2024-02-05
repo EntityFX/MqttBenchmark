@@ -89,6 +89,7 @@ public class AggregatedReportSink : IReportingSink
                     ["request_count"] = sts.Ok.Request.Count + sts.Fail.Request.Count,
                     ["ok"] = sts.Ok.Request.Count,
                     ["failed"] = sts.Fail.Request.Count,
+                    ["received"] = GetReceived(nodeStat.Value.NodeStats),
                     ["rps"] = sts.Ok.Request.RPS,
                     ["min"] = sts.Ok.Latency.MinMs,
                     ["mean"] = sts.Ok.Latency.MeanMs,
@@ -101,7 +102,8 @@ public class AggregatedReportSink : IReportingSink
                     ["data_transfer_min"] = sts.Ok.DataTransfer.MinBytes,
                     ["data_transfer_mean"] = sts.Ok.DataTransfer.MeanBytes,
                     ["data_transfer_max"] = sts.Ok.DataTransfer.MaxBytes,
-                    ["data_transfer_all"] = sts.Ok.DataTransfer.AllBytes
+                    ["data_transfer_all"] = sts.Ok.DataTransfer.AllBytes,
+                    ["start_date_time"] = nodeStat.Value.NodeStats.TestInfo.Created.ToString("s", CultureInfo.InvariantCulture)
                 })?.FirstOrDefault() ?? new Dictionary<string, object>())).ToArray();
 
         var sb = new StringBuilder();
@@ -114,6 +116,32 @@ public class AggregatedReportSink : IReportingSink
         }
 
         return sb.ToString();
+    }
+
+    private int GetReceived(NodeStats NodeStats)
+    {
+        if (NodeStats?.PluginStats?.Any() != true)
+        {
+            return 0;
+        }
+
+        if (NodeStats.PluginStats[0]?.Tables?.Contains("Receive") != true)
+        {
+            return 0;
+        }
+
+        var receiveTable = NodeStats.PluginStats[0].Tables["Receive"];
+
+        if (!(receiveTable?.Rows?.Count > 0))
+        {
+            return 0;
+        }
+
+        var row = receiveTable!.Rows[0];
+
+        var received = row["ReceiveCounter"] as int?;
+
+        return received ?? 0;
     }
 
     public string AsMd()
@@ -131,6 +159,7 @@ public class AggregatedReportSink : IReportingSink
                     ["request_count"] = sts.Ok.Request.Count + sts.Fail.Request.Count,
                     ["ok"] = sts.Ok.Request.Count,
                     ["failed"] = sts.Fail.Request.Count,
+                    ["received"] = GetReceived(nodeStat.Value.NodeStats),
                     ["rps"] = sts.Ok.Request.RPS,
                     ["min"] = sts.Ok.Latency.MinMs,
                     ["mean"] = sts.Ok.Latency.MeanMs,
@@ -143,7 +172,8 @@ public class AggregatedReportSink : IReportingSink
                     ["data_transfer_min"] = sts.Ok.DataTransfer.MinBytes,
                     ["data_transfer_mean"] = sts.Ok.DataTransfer.MeanBytes,
                     ["data_transfer_max"] = sts.Ok.DataTransfer.MaxBytes,
-                    ["data_transfer_all"] = sts.Ok.DataTransfer.AllBytes
+                    ["data_transfer_all"] = sts.Ok.DataTransfer.AllBytes,
+                    ["start_date_time"] = nodeStat.Value.NodeStats.TestInfo.Created.ToString("s", CultureInfo.InvariantCulture)
                 })?.FirstOrDefault() ?? new Dictionary<string, object>())).ToArray();
 
         var sb = new StringBuilder();
