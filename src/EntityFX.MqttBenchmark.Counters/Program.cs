@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Hosting;
 using MQTTnet;
 using MQTTnet.Client;
+using MQTTnet.Packets;
 using MQTTnet.Protocol;
 using System.Collections.Concurrent;
 using System.Web;
@@ -17,18 +18,27 @@ app.UseSwagger();
 app.UseSwaggerUI();
 
 var rootConfig = app.Services.GetRequiredService<IConfiguration>();
-var logger = app.Services.GetRequiredService<ILogger<Program>>();
+ILogger<Program> logger = app.Services.GetRequiredService<ILogger<Program>>();
 var settings = rootConfig.GetSection("Mqtt").Get<MqttSettings[]>();
+Dictionary<string, bool> status = settings.ToDictionary(kv => kv.Broker.ToString(), kv => false);
+Dictionary<string, int> wait = settings.ToDictionary(kv => kv.Broker.ToString(), kv => 0);
 
 // Configure the HTTP request pipeline.
 
 ConcurrentDictionary<(string Broker, string Topic), int> countersStore =
     new ConcurrentDictionary<(string, string), int>();
 
+
+
+
+object _lock = new { };
+
 var mqttClients = settings.Select(async s => await ConnectMqttAndSubscribe(s))
     .Where(mq => mq != null).ToArray();
 
 MapApi(app, countersStore);
+
+
 
 app.Run();
 
@@ -37,6 +47,8 @@ async Task<IMqttClient?> ConnectMqttAndSubscribe(MqttSettings mqttSettings)
     var mqttFactory = new MqttFactory();
 
     var mqttClient = mqttFactory.CreateMqttClient();
+
+
 
     var mqttClientOptions = new MqttClientOptionsBuilder()
         .WithTcpServer(mqttSettings.Broker.Host, mqttSettings.Broker.Port)
@@ -65,16 +77,17 @@ async Task<IMqttClient?> ConnectMqttAndSubscribe(MqttSettings mqttSettings)
 
     mqttClient.DisconnectedAsync += async e =>
     {
-        await Task.Delay(TimeSpan.FromSeconds(5));
-        try
+        int reconnectDelay = 0;
+        lock (_lock)
         {
-            logger.LogWarning($"{DateTime.Now}: Re-connect to {mqttSettings.Broker}");
-            await mqttClient.ConnectAsync(mqttClient.Options);
+            reconnectDelay = wait[brokerName];
+            reconnectDelay = reconnectDelay == 0 ? 5 : (reconnectDelay >= 60 ? 60 : reconnectDelay * 2);
+            wait[brokerName] = reconnectDelay;
         }
-        catch (Exception ex)
-        {
-            logger.LogError(ex.Message);
-        }
+
+        await Task.Delay(TimeSpan.FromSeconds(reconnectDelay));
+        logger.LogWarning($"{DateTime.Now}: Re-connect to {mqttSettings.Broker}");
+        var result = ConnectAsync(mqttClient, mqttClient.Options, brokerName);
     };
 
     mqttClient.ApplicationMessageReceivedAsync += e =>
@@ -83,17 +96,27 @@ async Task<IMqttClient?> ConnectMqttAndSubscribe(MqttSettings mqttSettings)
         return Task.CompletedTask;
     };
 
-    try
-    {
-        var result = await mqttClient.ConnectAsync(mqttClientOptions, CancellationToken.None);
-    }
-    catch (Exception e)
-    {
-        logger.LogError(e.Message);
-        return null;
-    }
+    var result = ConnectAsync(mqttClient, mqttClientOptions, brokerName);
 
     return mqttClient;
+}
+
+async Task<MqttClientConnectResult?> ConnectAsync(
+    IMqttClient mqttClient, MqttClientOptions mqttClientOptions, string brokerName)
+{
+    try
+    {
+        var connResult = await mqttClient.ConnectAsync(mqttClientOptions);
+        status[brokerName] = true;
+
+        return connResult;
+    }
+    catch (Exception ex)
+    {
+        status[brokerName] = false;
+        logger.LogError(ex.Message);
+    }
+    return null;
 }
 
 int Increment(string broker, string topic)
@@ -126,8 +149,7 @@ void MapApi(WebApplication app, ConcurrentDictionary<(string Broker, string Topi
 
     app.MapGet("/status", () =>
     {
-        return mqttClients.Where(c => c.Result != null).Select(c => c.Result)
-        .ToDictionary(k => k.Options.ChannelOptions.ToString(), k => k.IsConnected);
+        return status;
     });
 
     app.MapDelete("/counter/{broker}/{topic}", (string broker, string topic) =>
