@@ -16,7 +16,8 @@ class Benchmark
         _testSettings = testSettings;
         this.mqttCounterClient = mqttCounterClient;
         var outputPath = _testSettings.OutputPath;
-        _outputPath = Path.Combine(outputPath,
+        var name = _testSettings.Name ?? string.Empty;
+        _outputPath = Path.Combine(outputPath, name,
             DateTime.Now.ToString("s", CultureInfo.InvariantCulture)
                 .Replace(":", "_"));
     }

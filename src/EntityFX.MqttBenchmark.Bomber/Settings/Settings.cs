@@ -9,5 +9,7 @@
         public Dictionary<string, string> TemplateFiles { get; set; } = new();
 
         public bool InParallel { get; set; } = true;
+
+        public string Name { get; set; } = string.Empty;
     }
 }

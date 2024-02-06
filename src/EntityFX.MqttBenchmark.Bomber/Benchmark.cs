@@ -31,7 +31,6 @@ internal class Benchmark
         this.mqttCounterClient = mqttCounterClient;
         this.settings = configuration.Get<Settings>() ?? new Settings();
         scenarioGroups = GroupScenarioTemplates(settings.TestParams, settings.ScenarioNameTemplates);
-
     }
 
     public void Run()
@@ -101,10 +100,11 @@ internal class Benchmark
         }
 
         var resultsCsv = aggregatedReportSink.AsCsv();
-        File.WriteAllText(Path.Combine("reports", startTimePath, "results.csv"), resultsCsv);
+        //var 
+        File.WriteAllText(Path.Combine("reports", this.settings.Name, startTimePath, "results.csv"), resultsCsv);
 
         var resultsMd = aggregatedReportSink.AsMd();
-        File.WriteAllText(Path.Combine("reports", startTimePath, "results.md"), resultsMd);
+        File.WriteAllText(Path.Combine("reports", this.settings.Name, startTimePath, "results.md"), resultsMd);
 
         Console.WriteLine(resultsMd);
     }
@@ -145,7 +145,7 @@ internal class Benchmark
         .LoadInfraConfig("infra-config.json")
         .LoadConfig(fileName)
         .WithReportFileName(firstTest)
-        .WithReportFolder(Path.Combine("reports", startTimePath, firstTest))
+        .WithReportFolder(Path.Combine("reports", this.settings.Name, startTimePath, firstTest))
         .WithReportingSinks(aggregatedReportSink.WithScenarioParams(scenarioParamsTemplate))
         .Run();
     }

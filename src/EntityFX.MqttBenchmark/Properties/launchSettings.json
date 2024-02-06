@@ -6,6 +6,10 @@
         "__DOTNET_ENVIRONMENT": "Development",
         "DOTNET_ENVIRONMENT": "Development"
       }
+    },
+    "EntityFX.MqttBenchmark qos2_c1__6": {
+      "commandName": "Project",
+      "commandLineArgs": "-c appsettings.qos2_c1__6.json"
     }
   }
 }

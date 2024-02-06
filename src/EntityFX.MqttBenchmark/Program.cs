@@ -28,24 +28,20 @@ TestSettings? LoadSettings(string[] args, HostApplicationBuilder builder, out IS
 {
 
 
-    var extraConfig = GetExtraConfig(args);
+    var appSettingsPath = GetExtraConfig(args);
 
     Console.WriteLine($"Envrionment: {builder.Environment.EnvironmentName}");
+    Console.WriteLine($"Config: {appSettingsPath}");
 
-    if (!string.IsNullOrEmpty(extraConfig))
-    {
-        Console.WriteLine($"Extra config: {extraConfig}");
+    var appSettingsFileName = Path.GetFileNameWithoutExtension(appSettingsPath);
 
-        builder.Configuration.AddJsonFile(extraConfig);
-    }
+    builder.Configuration.Sources.Clear();
 
     builder.Configuration
-        .AddJsonFile("appsettings.json")
-        .AddJsonFile($"appsettings.{builder.Environment.EnvironmentName}.json", optional: true)
+        .AddJsonFile(appSettingsPath)
+        .AddJsonFile($"{appSettingsFileName}.{builder.Environment.EnvironmentName}.json", optional: true)
         .AddEnvironmentVariables()
         .AddCommandLine(args);
-
-    builder.Logging.ClearProviders();
 
     var host = builder.Build();
 
@@ -64,7 +60,7 @@ TestSettings? LoadSettings(string[] args, HostApplicationBuilder builder, out IS
     return settings;
 }
 
-string? GetExtraConfig(string[] args)
+string GetExtraConfig(string[] args)
 {
     var configArgNames = new[] { "-c", "--config" };
 
@@ -76,5 +72,5 @@ string? GetExtraConfig(string[] args)
         }
     }
 
-    return null;
+    return "appsettings.json";
 }

@@ -1,7 +1,7 @@
 Get-Date 
 Write-Host "Run 10 seconds"
 
-Push-Location "EntityFX.MqttBenchmark.Bomber\bin\Release\net6.0\"
+Push-Location "..\src\EntityFX.MqttBenchmark.Bomber\bin\Release\net6.0\"
 
 Get-Date
 Write-Host "Run Bomber - 16 b - 10 s"
@@ -13,7 +13,7 @@ Start-Process -FilePath ".\EntityFX.MqttBenchmark.Bomber.exe" -Wait -ArgumentLis
 
 Pop-Location
 
-Push-Location "EntityFX.MqttBenchmark\bin\Release\net6.0\"
+Push-Location "..\src\EntityFX.MqttBenchmark\bin\Release\net6.0\"
 
 Get-Date
 Write-Host "Run MqttBenchmark - 16 b - 10 s"
@@ -29,7 +29,7 @@ Get-Date
 Write-Host "Run 180 seconds"
 
 
-Push-Location "EntityFX.MqttBenchmark.Bomber\bin\Release\net6.0\"
+Push-Location "..\src\EntityFX.MqttBenchmark.Bomber\bin\Release\net6.0\"
 
 Get-Date
 Write-Host "Run Bomber - 16 b - 180 s"
@@ -41,7 +41,7 @@ Start-Process -FilePath ".\EntityFX.MqttBenchmark.Bomber.exe" -Wait -ArgumentLis
 
 Pop-Location
 
-Push-Location "EntityFX.MqttBenchmark\bin\Release\net6.0\"
+Push-Location "..\src\EntityFX.MqttBenchmark\bin\Release\net6.0\"
 
 Get-Date
 Write-Host "Run MqttBenchmark - 16 b - 180 s"
