@@ -3,22 +3,29 @@ using Microsoft.Extensions.Configuration;
 using NBomber.Contracts;
 using NBomber.Contracts.Stats;
 using System.Data;
+using System.Diagnostics.Metrics;
 using System.Globalization;
 using System.Text;
+using System.Text.Json;
 
 namespace EntityFX.MqttBenchmark.Bomber;
 
 public class AggregatedReportSink : IReportingSink
 {
     private ScenarioParamsTemplate? scenarioParamsTemplate;
+    private Dictionary<string, ScenarioParamsTemplate> scenarioSubSubGroup = new Dictionary<string, ScenarioParamsTemplate>();
     private readonly MqttCounterClient mqttCounterClient;
+    private readonly string countersPath;
 
-    public AggregatedReportSink(MqttCounterClient mqttCounterClient)
+    public AggregatedReportSink(MqttCounterClient mqttCounterClient, string countersPath)
     {
         this.mqttCounterClient = mqttCounterClient;
+        this.countersPath = countersPath;
     }
 
-    public Dictionary<string, (NodeStats NodeStats, ScenarioParamsTemplate? Params)> AllNodeStats { get; } = new Dictionary<string, (NodeStats NodeStats, ScenarioParamsTemplate Params)>();
+    public Dictionary<string, (NodeStats NodeStats, Dictionary<string, ScenarioParamsTemplate> ScenarioSubSubGroup, Dictionary<string, int> Counters)>
+        AllNodeStats { get; } 
+        = new Dictionary<string, (NodeStats NodeStats, Dictionary<string, ScenarioParamsTemplate> ScenarioSubSubGroup, Dictionary<string, int> Counters)>();
 
     public string SinkName => nameof(AggregatedReportSink);
 
@@ -28,34 +35,19 @@ public class AggregatedReportSink : IReportingSink
 
     public Task Init(IBaseContext context, IConfiguration infraConfig)
     {
-        //var brokerUrl = (new UriBuilder("mqtt", settings.Server, settings.Port)).Uri;
-
-        // var counter = await _mqttCounterClient.GetCounter(brokerUrl.ToString(), settings.Topic);
-
         return Task.CompletedTask;
     }
 
     public async Task SaveFinalStats(NodeStats stats)
     {
-        var counter = await mqttCounterClient
-            .GetCounter(scenarioParamsTemplate!.Server, scenarioParamsTemplate!.Topic);
+        var counters = scenarioSubSubGroup.ToDictionary(sg => sg.Key, async sg => await mqttCounterClient
+            .GetCounter(sg.Value.Server, sg.Value.Topic))
+            .ToDictionary(sg => sg.Key, sg => sg.Value.Result);
 
+        var dataSetJson = JsonSerializer.Serialize(counters, new JsonSerializerOptions(new JsonSerializerOptions() { WriteIndented = true }));
+        await File.WriteAllTextAsync(countersPath, dataSetJson);
 
-        var dataSet = new System.Data.DataSet("Counters");
-        var dt = new System.Data.DataTable("Receive");
-        var dc = new DataColumn("ReceiveCounter", typeof(int));
-        dt.Columns.Add(dc);
-        dataSet.Tables.Add(dt);
-
-        var row = dt.NewRow();
-        row["ReceiveCounter"] = counter;
-
-        dt.Rows.Add(row);
-        dataSet.AcceptChanges();
-
-        stats.PluginStats = new DataSet[] { dataSet };
-
-        AllNodeStats.Add(stats.TestInfo.SessionId, (stats, scenarioParamsTemplate));
+        AllNodeStats.Add(stats.TestInfo.SessionId, (stats, scenarioSubSubGroup, counters));
     }
 
     public Task SaveRealtimeStats(ScenarioStats[] stats)
@@ -65,8 +57,10 @@ public class AggregatedReportSink : IReportingSink
 
     public async Task Start()
     {
-        await mqttCounterClient
-            .ClearCounter(scenarioParamsTemplate!.Server, scenarioParamsTemplate!.Topic);
+        foreach (var sg in scenarioSubSubGroup)
+        {
+            await mqttCounterClient.ClearCounter(sg.Value!.Server, sg.Value!.Topic);
+        }
     }
 
     public Task Stop()
@@ -77,34 +71,51 @@ public class AggregatedReportSink : IReportingSink
     public string AsCsv()
     {
         var allStats = AllNodeStats.SelectMany(
-            nodeStat => nodeStat.Value.NodeStats.ScenarioStats.Select(
-                ss => ss.StepStats.Where(sts => sts.StepName == "publish")?.Select(sts => new Dictionary<string, object>()
+            nodeStat =>
+            {
+
+                var scenarioStats = nodeStat.Value.NodeStats.ScenarioStats.Select(
+
+                ss =>
                 {
-                    ["scenario"] = ss.ScenarioName,
-                    ["params_qos"] = nodeStat.Value.Params?.Params?.GetValueOrDefault("qos", -1) ?? -1,
-                    ["params_clients"] = nodeStat.Value.Params?.Params?.GetValueOrDefault("clients", -1) ?? -1,
-                    ["params_message_size"] = nodeStat.Value.Params?.Params?.GetValueOrDefault("message", -1) ?? -1,
-                    ["duration"] = ss.Duration,
-                    ["step_name"] = sts.StepName,
-                    ["request_count"] = sts.Ok.Request.Count + sts.Fail.Request.Count,
-                    ["ok"] = sts.Ok.Request.Count,
-                    ["failed"] = sts.Fail.Request.Count,
-                    ["received"] = GetReceived(nodeStat.Value.NodeStats),
-                    ["rps"] = sts.Ok.Request.RPS,
-                    ["min"] = sts.Ok.Latency.MinMs,
-                    ["mean"] = sts.Ok.Latency.MeanMs,
-                    ["max"] = sts.Ok.Latency.MaxMs,
-                    ["50_percent"] = sts.Ok.Latency.Percent50,
-                    ["75_percent"] = sts.Ok.Latency.Percent75,
-                    ["95_percent"] = sts.Ok.Latency.Percent95,
-                    ["99_percent"] = sts.Ok.Latency.Percent99,
-                    ["std_dev"] = sts.Ok.Latency.StdDev,
-                    ["data_transfer_min"] = sts.Ok.DataTransfer.MinBytes,
-                    ["data_transfer_mean"] = sts.Ok.DataTransfer.MeanBytes,
-                    ["data_transfer_max"] = sts.Ok.DataTransfer.MaxBytes,
-                    ["data_transfer_all"] = sts.Ok.DataTransfer.AllBytes,
-                    ["start_date_time"] = nodeStat.Value.NodeStats.TestInfo.Created.ToString("s", CultureInfo.InvariantCulture)
-                })?.FirstOrDefault() ?? new Dictionary<string, object>())).ToArray();
+                    var ssg = nodeStat.Value.ScenarioSubSubGroup?.GetValueOrDefault(ss.ScenarioName);
+                    var receiveCounter = nodeStat.Value.Counters?.GetValueOrDefault(ss.ScenarioName) ?? 0;
+
+                    return ss.StepStats.Where(sts => sts.StepName == "publish")?.Select(sts => new Dictionary<string, object>()
+                    {
+                        ["scenario"] = ss.ScenarioName,
+                        ["params_qos"] = ssg?.Params?.GetValueOrDefault("qos", -1) ?? -1,
+                        ["params_clients"] = ssg?.Params?.GetValueOrDefault("clients", -1) ?? -1,
+                        ["params_message_size"] = ssg?.Params?.GetValueOrDefault("message", -1) ?? -1,
+                        ["duration"] = ss.Duration,
+                        ["step_name"] = sts.StepName,
+                        ["request_count"] = sts.Ok.Request.Count + sts.Fail.Request.Count,
+                        ["ok"] = sts.Ok.Request.Count,
+                        ["failed"] = sts.Fail.Request.Count,
+                        ["received"] = receiveCounter,
+                        ["rps"] = sts.Ok.Request.RPS,
+                        ["min"] = sts.Ok.Latency.MinMs,
+                        ["mean"] = sts.Ok.Latency.MeanMs,
+                        ["max"] = sts.Ok.Latency.MaxMs,
+                        ["50_percent"] = sts.Ok.Latency.Percent50,
+                        ["75_percent"] = sts.Ok.Latency.Percent75,
+                        ["95_percent"] = sts.Ok.Latency.Percent95,
+                        ["99_percent"] = sts.Ok.Latency.Percent99,
+                        ["std_dev"] = sts.Ok.Latency.StdDev,
+                        ["data_transfer_min"] = sts.Ok.DataTransfer.MinBytes,
+                        ["data_transfer_mean"] = sts.Ok.DataTransfer.MeanBytes,
+                        ["data_transfer_max"] = sts.Ok.DataTransfer.MaxBytes,
+                        ["data_transfer_all"] = sts.Ok.DataTransfer.AllBytes,
+                        ["start_date_time"] = nodeStat.Value.NodeStats.TestInfo.Created.ToString("s", CultureInfo.InvariantCulture)
+                    })?.FirstOrDefault() ?? new Dictionary<string, object>();
+
+
+                });
+
+                return scenarioStats;
+            }).ToArray();
+
+        //var allStats = new Dictionary<string, object>[0];
 
         var sb = new StringBuilder();
         sb.AppendLine(string.Join(",", allStats.FirstOrDefault()?.Keys.ToArray() ?? Array.Empty<string>()));
@@ -118,63 +129,50 @@ public class AggregatedReportSink : IReportingSink
         return sb.ToString();
     }
 
-    private int GetReceived(NodeStats NodeStats)
-    {
-        if (NodeStats?.PluginStats?.Any() != true)
-        {
-            return 0;
-        }
-
-        if (NodeStats.PluginStats[0]?.Tables?.Contains("Receive") != true)
-        {
-            return 0;
-        }
-
-        var receiveTable = NodeStats.PluginStats[0].Tables["Receive"];
-
-        if (!(receiveTable?.Rows?.Count > 0))
-        {
-            return 0;
-        }
-
-        var row = receiveTable!.Rows[0];
-
-        var received = row["ReceiveCounter"] as int?;
-
-        return received ?? 0;
-    }
-
     public string AsMd()
     {
         var allStats = AllNodeStats.SelectMany(
-            nodeStat => nodeStat.Value.NodeStats.ScenarioStats.Select(
-                ss => ss.StepStats.Where(sts => sts.StepName == "publish")?.Select(sts => new Dictionary<string, object>()
+            nodeStat =>
+            {
+
+                var scenarioStats = nodeStat.Value.NodeStats.ScenarioStats.Select(
+
+                ss =>
                 {
-                    ["scenario"] = ss.ScenarioName,
-                    ["params_qos"] = nodeStat.Value.Params?.Params?.GetValueOrDefault("qos", -1) ?? -1,
-                    ["params_clients"] = nodeStat.Value.Params?.Params?.GetValueOrDefault("clients", -1) ?? -1,
-                    ["params_message_size"] = nodeStat.Value.Params?.Params?.GetValueOrDefault("message", -1) ?? -1,
-                    ["duration"] = ss.Duration,
-                    ["step_name"] = sts.StepName,
-                    ["request_count"] = sts.Ok.Request.Count + sts.Fail.Request.Count,
-                    ["ok"] = sts.Ok.Request.Count,
-                    ["failed"] = sts.Fail.Request.Count,
-                    ["received"] = GetReceived(nodeStat.Value.NodeStats),
-                    ["rps"] = sts.Ok.Request.RPS,
-                    ["min"] = sts.Ok.Latency.MinMs,
-                    ["mean"] = sts.Ok.Latency.MeanMs,
-                    ["max"] = sts.Ok.Latency.MaxMs,
-                    ["50_percent"] = sts.Ok.Latency.Percent50,
-                    ["75_percent"] = sts.Ok.Latency.Percent75,
-                    ["95_percent"] = sts.Ok.Latency.Percent95,
-                    ["99_percent"] = sts.Ok.Latency.Percent99,
-                    ["std_dev"] = sts.Ok.Latency.StdDev,
-                    ["data_transfer_min"] = sts.Ok.DataTransfer.MinBytes,
-                    ["data_transfer_mean"] = sts.Ok.DataTransfer.MeanBytes,
-                    ["data_transfer_max"] = sts.Ok.DataTransfer.MaxBytes,
-                    ["data_transfer_all"] = sts.Ok.DataTransfer.AllBytes,
-                    ["start_date_time"] = nodeStat.Value.NodeStats.TestInfo.Created.ToString("s", CultureInfo.InvariantCulture)
-                })?.FirstOrDefault() ?? new Dictionary<string, object>())).ToArray();
+                    var ssg = nodeStat.Value.ScenarioSubSubGroup?.GetValueOrDefault(ss.ScenarioName);
+                    var receiveCounter = nodeStat.Value.Counters?.GetValueOrDefault(ss.ScenarioName) ?? 0;
+
+                    return ss.StepStats.Where(sts => sts.StepName == "publish")?.Select(sts => new Dictionary<string, object>()
+                    {
+                        ["scenario"] = ss.ScenarioName,
+                        ["params_qos"] = ssg?.Params?.GetValueOrDefault("qos", -1) ?? -1,
+                        ["params_clients"] = ssg?.Params?.GetValueOrDefault("clients", -1) ?? -1,
+                        ["params_message_size"] = ssg?.Params?.GetValueOrDefault("message", -1) ?? -1,
+                        ["duration"] = ss.Duration,
+                        ["step_name"] = sts.StepName,
+                        ["request_count"] = sts.Ok.Request.Count + sts.Fail.Request.Count,
+                        ["ok"] = sts.Ok.Request.Count,
+                        ["failed"] = sts.Fail.Request.Count,
+                        ["received"] = receiveCounter,
+                        ["rps"] = sts.Ok.Request.RPS,
+                        ["min"] = sts.Ok.Latency.MinMs,
+                        ["mean"] = sts.Ok.Latency.MeanMs,
+                        ["max"] = sts.Ok.Latency.MaxMs,
+                        ["50_percent"] = sts.Ok.Latency.Percent50,
+                        ["75_percent"] = sts.Ok.Latency.Percent75,
+                        ["95_percent"] = sts.Ok.Latency.Percent95,
+                        ["99_percent"] = sts.Ok.Latency.Percent99,
+                        ["std_dev"] = sts.Ok.Latency.StdDev,
+                        ["data_transfer_min"] = sts.Ok.DataTransfer.MinBytes,
+                        ["data_transfer_mean"] = sts.Ok.DataTransfer.MeanBytes,
+                        ["data_transfer_max"] = sts.Ok.DataTransfer.MaxBytes,
+                        ["data_transfer_all"] = sts.Ok.DataTransfer.AllBytes,
+                        ["start_date_time"] = nodeStat.Value.NodeStats.TestInfo.Created.ToString("s", CultureInfo.InvariantCulture)
+                    })?.FirstOrDefault() ?? new Dictionary<string, object>();
+                });
+
+                return scenarioStats;
+            }).ToArray();
 
         var sb = new StringBuilder();
         sb.AppendLine($"|{string.Join("|", allStats.FirstOrDefault()?.Keys.ToArray() ?? Array.Empty<string>())}|");
@@ -193,5 +191,10 @@ public class AggregatedReportSink : IReportingSink
         this.scenarioParamsTemplate = scenarioParamsTemplate;
 
         return this;
+    }
+
+    internal void AddScenarioSubGroup(Dictionary<string, ScenarioParamsTemplate> scenarioSubSubGroup)
+    {
+        this.scenarioSubSubGroup = scenarioSubSubGroup;
     }
 }

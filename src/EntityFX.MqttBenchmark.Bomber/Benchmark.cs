@@ -35,14 +35,15 @@ internal class Benchmark
 
     public void Run()
     {
-
+        Console.WriteLine($"Test set name: {this.settings.Name}");
         var configTemplateFile = File.ReadAllText(settings.TemplateFiles.GetValueOrDefault("Config", "config.template.json"));
         var scenariosTemplateFile = File.ReadAllText(settings.TemplateFiles.GetValueOrDefault("Scenarios", "scenarios.template.json"));
 
         var scenarioTemplates = JsonSerializer.Deserialize<Dictionary<string, ScenarioTemplate>>(scenariosTemplateFile);
 
         var startTimePath = DateTime.Now.ToString("s", CultureInfo.InvariantCulture).Replace(":", "_");
-        var aggregatedReportSink = new AggregatedReportSink(mqttCounterClient);
+        var countersPath = Path.Combine("reports", this.settings.Name, startTimePath, "counters.json");
+        var aggregatedReportSink = new AggregatedReportSink(mqttCounterClient, countersPath);
 
 
         foreach (var scenarioGroup in scenarioGroups)
@@ -85,6 +86,8 @@ internal class Benchmark
 
                     File.WriteAllText(fileName, newTemplate);
 
+                    aggregatedReportSink.AddScenarioSubGroup(scenarioSubSubGroup);
+
                     if (settings.InParallel)
                     {
                         RunParallel(startTimePath, aggregatedReportSink, scenarioSubSubGroup, scenarioParamsTemplate, firstTest, fileName);
@@ -125,7 +128,7 @@ internal class Benchmark
                 .LoadInfraConfig("infra-config.json")
                 .LoadConfig(fileName)
                 .WithReportFileName(testItem.Key)
-                .WithReportFolder(Path.Combine("reports", startTimePath, testItem.Key))
+                .WithReportFolder(Path.Combine("reports", this.settings.Name, startTimePath, testItem.Key))
                 .WithReportingSinks(aggregatedReportSink.WithScenarioParams(scenarioParamsTemplate))
                 .Run();
         }

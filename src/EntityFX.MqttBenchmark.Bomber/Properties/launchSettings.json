@@ -15,6 +15,10 @@
     "EntityFX.MqttBenchmark.Bomber Clients Mosquitto": {
       "commandName": "Project",
       "commandLineArgs": "-c appsettings.Mosquitto.json"
+    },
+    "EntityFX.MqttBenchmark.Bomber qos2 c 1 - 6": {
+      "commandName": "Project",
+      "commandLineArgs": "-c appsettings.qos2_c1__6.json"
     }
   }
 }
