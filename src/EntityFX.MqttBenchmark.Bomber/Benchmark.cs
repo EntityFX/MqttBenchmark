@@ -42,7 +42,7 @@ internal class Benchmark
         var scenarioTemplates = JsonSerializer.Deserialize<Dictionary<string, ScenarioTemplate>>(scenariosTemplateFile);
 
         var startTimePath = DateTime.Now.ToString("s", CultureInfo.InvariantCulture).Replace(":", "_");
-        var countersPath = Path.Combine("reports", this.settings.Name, startTimePath, "counters.json");
+        var countersPath = Path.Combine("reports", this.settings.Name, startTimePath);
         var aggregatedReportSink = new AggregatedReportSink(mqttCounterClient, countersPath);
 
 

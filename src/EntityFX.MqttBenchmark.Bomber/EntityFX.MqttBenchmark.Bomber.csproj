@@ -17,6 +17,13 @@
   </ItemGroup>
 
   <ItemGroup>
+    <None Update="appsettings.qos2_c1__12.Development.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <DependentUpon>appsettings.qos2_c1__12.json</DependentUpon>
+    </None>
+    <None Update="appsettings.qos2_c1__12.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
     <None Update="appsettings.qos2_c1__6.Development.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <DependentUpon>appsettings.qos2_c1__6.json</DependentUpon>
@@ -43,6 +50,9 @@
     <None Update="templates\scenarios_m16_t10.template.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <None Update="templates\scenarios_m16_t30.template.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
     <None Update="templates\scenarios_m16_t60.template.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
@@ -53,6 +63,9 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
     <None Update="templates\scenarios_m256_t180.template.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="templates\scenarios_m256_t30.template.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
     <None Update="templates\scenarios_m256_t60.template.json">

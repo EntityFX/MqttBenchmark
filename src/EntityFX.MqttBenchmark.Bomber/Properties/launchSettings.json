@@ -19,6 +19,10 @@
     "EntityFX.MqttBenchmark.Bomber qos2 c 1 - 6": {
       "commandName": "Project",
       "commandLineArgs": "-c appsettings.qos2_c1__6.json"
+    },
+    "EntityFX.MqttBenchmark.Bomber qos2 c 1 - 12": {
+      "commandName": "Project",
+      "commandLineArgs": "-c appsettings.qos2_c1__12.json"
     }
   }
 }

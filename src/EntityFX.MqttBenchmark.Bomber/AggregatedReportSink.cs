@@ -44,8 +44,8 @@ public class AggregatedReportSink : IReportingSink
             .GetCounter(sg.Value.Server, sg.Value.Topic))
             .ToDictionary(sg => sg.Key, sg => sg.Value.Result);
 
-        var dataSetJson = JsonSerializer.Serialize(counters, new JsonSerializerOptions(new JsonSerializerOptions() { WriteIndented = true }));
-        await File.WriteAllTextAsync(countersPath, dataSetJson);
+        //var dataSetJson = JsonSerializer.Serialize(counters, new JsonSerializerOptions(new JsonSerializerOptions() { WriteIndented = true }));
+        //await File.WriteAllTextAsync(countersPath, dataSetJson);
 
         AllNodeStats.Add(stats.TestInfo.SessionId, (stats, scenarioSubSubGroup, counters));
     }

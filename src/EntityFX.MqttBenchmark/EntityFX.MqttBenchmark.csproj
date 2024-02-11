@@ -14,6 +14,13 @@
 	</ItemGroup>
 
 	<ItemGroup>
+	  <None Update="appsettings.qos2_c1__12.json">
+	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+	  </None>
+	  <None Update="appsettings.qos2_c1__12.Production.json">
+		<DependentUpon>appsettings.qos2_c1__12.json</DependentUpon>
+	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+	  </None>
 	  <None Update="appsettings.qos2_c1__6.Production.json">
 		<DependentUpon>appsettings.qos2_c1__6.json</DependentUpon>
 	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
