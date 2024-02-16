@@ -1,13 +1,39 @@
 ﻿using System.Net.Http.Json;
 using System.Net;
+using Microsoft.Extensions.Logging;
 
 public class MqttCounterClient
 {
+    private readonly ILogger logger;
     private readonly HttpClient httpClient;
 
-    public MqttCounterClient(HttpClient httpClientFactory)
+    private TimeSpan retryPeriod = TimeSpan.FromSeconds(1);
+
+    public MqttCounterClient(ILogger<MqttCounterClient> logger, HttpClient httpClientFactory)
     {
+        this.logger = logger;
         this.httpClient = httpClientFactory;
+    }
+
+    public async Task<int> GetCounterAndValidate(string broker, string topic, int attempts = 5, TimeSpan? retryPeriod = null)
+    {
+        int counterValue = 0;
+
+        TimeSpan actualPeriod = retryPeriod ?? this.retryPeriod;
+        for (int attempt = 1; attempt <= attempts; attempt++)
+        {
+            var currentCounter = await GetCounter(broker, topic);
+            logger.LogInformation($"Got counter={currentCounter} [Broker={broker}, Topic={topic}]");
+            if (currentCounter == counterValue) {
+                return currentCounter;
+            }
+
+            counterValue = currentCounter;
+            await Task.Delay(actualPeriod);
+            
+        }
+
+        return counterValue;
     }
 
     public async Task<int> GetCounter(string broker, string topic)

@@ -70,16 +70,17 @@ class MqttScenarioBuilder
             await client.mqttClient.DisconnectAsync();
         }
         _clientPool.DisposeClients();
+
+        await Task.Delay(5000);
     }
 
     private async Task Init(IScenarioInitContext arg)
     {
+        await Task.Delay(5000);
         var settings = arg.CustomSettings.Get<MqttScenarioSettings>()
             ?? new MqttScenarioSettings("test", MQTTnet.Protocol.MqttQualityOfServiceLevel.AtMostOnce,
             "localhost", 1883, 50, 1024
             );
-
-        var brokerUrl = (new UriBuilder("mqtt", settings.Server, settings.Port)).Uri;
 
         await ScenarioHelper.BuildMqttClientPool(_clientPool, settings);
     }
