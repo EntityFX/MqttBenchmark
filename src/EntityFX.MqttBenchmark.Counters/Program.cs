@@ -6,10 +6,18 @@ using MQTTnet.Protocol;
 using System.Collections.Concurrent;
 using System.Web;
 
+ConcurrentDictionary<(string Broker, string Topic), int> countersStore =
+    new ConcurrentDictionary<(string, string), int>();
+
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+
+builder.Services.AddHostedService<TimedHostedService>(
+    c => new TimedHostedService(c.GetRequiredService<ILogger<TimedHostedService>>(),
+    countersStore
+    ));
 
 var app = builder.Build();
 app.MapSwagger();
@@ -22,13 +30,6 @@ ILogger<Program> logger = app.Services.GetRequiredService<ILogger<Program>>();
 var settings = rootConfig.GetSection("Mqtt").Get<MqttSettings[]>();
 Dictionary<string, bool> status = settings.ToDictionary(kv => kv.Broker.ToString(), kv => false);
 Dictionary<string, int> wait = settings.ToDictionary(kv => kv.Broker.ToString(), kv => 0);
-
-// Configure the HTTP request pipeline.
-
-ConcurrentDictionary<(string Broker, string Topic), int> countersStore =
-    new ConcurrentDictionary<(string, string), int>();
-
-
 
 
 object _lock = new { };
