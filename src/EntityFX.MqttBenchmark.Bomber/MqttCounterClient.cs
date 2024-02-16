@@ -23,12 +23,16 @@ public class MqttCounterClient
         for (int attempt = 1; attempt <= attempts; attempt++)
         {
             var currentCounter = await GetCounter(broker, topic);
-            logger.LogInformation($"Got counter={currentCounter} [Broker={broker}, Topic={topic}]");
-            if (currentCounter == counterValue) {
+            logger.LogInformation($"Got counter={currentCounter} [Prev counter={counterValue}, Attempt={attempt}, Broker={broker}, Topic={topic}]");
+            Console.WriteLine($"Got counter={currentCounter} [Prev counter={counterValue}, Attempt={attempt}, Broker={broker}, Topic={topic}]");
+            if (attempt > 1 && currentCounter == counterValue) {
                 return currentCounter;
             }
 
-            counterValue = currentCounter;
+            if (currentCounter >= counterValue) {
+                counterValue = currentCounter;
+            }
+
             await Task.Delay(actualPeriod);
             
         }

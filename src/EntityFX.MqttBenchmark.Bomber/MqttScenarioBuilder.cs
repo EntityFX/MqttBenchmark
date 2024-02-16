@@ -13,12 +13,20 @@ class MqttScenarioBuilder
 {
     private readonly ClientPool<(IMqttClient mqttClient, MqttScenarioSettings MqttScenarioSettings)> _clientPool;
     private readonly ILogger _logger;
+    private readonly IConfiguration configuration;
+    private readonly Dictionary<string, long> scenarioCounters;
+    private readonly MqttCounterClient mqttCounterClient;
 
     public MqttScenarioBuilder(
         ILogger logger,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        Dictionary<string, long> scenarioCounters,
+        MqttCounterClient mqttCounterClient)
     {
         _logger = logger;
+        this.configuration = configuration;
+        this.scenarioCounters = scenarioCounters;
+        this.mqttCounterClient = mqttCounterClient;
         _clientPool = new ClientPool<(IMqttClient mqttClient, MqttScenarioSettings MqttScenarioSettings)>();
     }
 
@@ -71,7 +79,17 @@ class MqttScenarioBuilder
         }
         _clientPool.DisposeClients();
 
+        var broker = new Uri($"mqtt://{settings.Server}:{settings.Port}/");
+
+        var counter = await mqttCounterClient.GetCounterAndValidate(broker.ToString(), settings.Topic);
+        scenarioCounters[context.ScenarioInfo.ScenarioName] = counter;
+
+        context.Logger.Information("{0}: Recieved conter={1}", context.ScenarioInfo.ScenarioName, counter);
+
         await Task.Delay(5000);
+
+        await mqttCounterClient.ClearCounter(broker.ToString(), settings.Topic);
+        context.Logger.Information("{0}: Clear conter", context.ScenarioInfo.ScenarioName);
     }
 
     private async Task Init(IScenarioInitContext arg)

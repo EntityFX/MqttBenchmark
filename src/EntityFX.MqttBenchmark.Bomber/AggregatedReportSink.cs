@@ -14,18 +14,16 @@ public class AggregatedReportSink : IReportingSink
 {
     private ScenarioParamsTemplate? scenarioParamsTemplate;
     private Dictionary<string, ScenarioParamsTemplate> scenarioSubSubGroup = new Dictionary<string, ScenarioParamsTemplate>();
-    private readonly MqttCounterClient mqttCounterClient;
-    private readonly string countersPath;
+    private readonly Dictionary<string, long> recievedCounters;
 
-    public AggregatedReportSink(MqttCounterClient mqttCounterClient, string countersPath)
+    public AggregatedReportSink(Dictionary<string, long> recievedCounters)
     {
-        this.mqttCounterClient = mqttCounterClient;
-        this.countersPath = countersPath;
+        this.recievedCounters = recievedCounters;
     }
 
-    public Dictionary<string, (NodeStats NodeStats, Dictionary<string, ScenarioParamsTemplate> ScenarioSubSubGroup, Dictionary<string, int> Counters)>
+    public Dictionary<string, (NodeStats NodeStats, Dictionary<string, ScenarioParamsTemplate> ScenarioSubSubGroup)>
         AllNodeStats { get; } 
-        = new Dictionary<string, (NodeStats NodeStats, Dictionary<string, ScenarioParamsTemplate> ScenarioSubSubGroup, Dictionary<string, int> Counters)>();
+        = new Dictionary<string, (NodeStats NodeStats, Dictionary<string, ScenarioParamsTemplate> ScenarioSubSubGroup)>();
 
     public string SinkName => nameof(AggregatedReportSink);
 
@@ -38,15 +36,13 @@ public class AggregatedReportSink : IReportingSink
         return Task.CompletedTask;
     }
 
-    public Task SaveFinalStats(NodeStats stats)
+    public async Task SaveFinalStats(NodeStats stats)
     {
-        var counters = scenarioSubSubGroup.ToDictionary(sg => sg.Key, async sg => await mqttCounterClient
-            .GetCounterAndValidate(sg.Value.Server, sg.Value.Topic))
-            .ToDictionary(sg => sg.Key, sg => sg.Value.Result);
+        // var counters = scenarioSubSubGroup.ToDictionary(sg => sg.Key, sg => mqttCounterClient
+        //     .GetCounterAndValidate(sg.Value.Server, sg.Value.Topic).Result)
+        //     .ToDictionary(sg => sg.Key, sg => sg.Value);
 
-        AllNodeStats.Add(stats.TestInfo.SessionId, (stats, scenarioSubSubGroup, counters));
-
-        return Task.CompletedTask;
+        AllNodeStats.Add(stats.TestInfo.SessionId, (stats, scenarioSubSubGroup));
     }
 
     public Task SaveRealtimeStats(ScenarioStats[] stats)
@@ -54,12 +50,9 @@ public class AggregatedReportSink : IReportingSink
         return Task.CompletedTask;
     }
 
-    public async Task Start()
+    public Task Start()
     {
-        foreach (var sg in scenarioSubSubGroup)
-        {
-            await mqttCounterClient.ClearCounter(sg.Value!.Server, sg.Value!.Topic);
-        }
+        return Task.CompletedTask;
     }
 
     public Task Stop()
@@ -78,7 +71,6 @@ public class AggregatedReportSink : IReportingSink
                 ss =>
                 {
                     var ssg = nodeStat.Value.ScenarioSubSubGroup?.GetValueOrDefault(ss.ScenarioName);
-                    var receiveCounter = nodeStat.Value.Counters?.GetValueOrDefault(ss.ScenarioName) ?? 0;
 
                     return ss.StepStats.Where(sts => sts.StepName == "publish")?.Select(sts => new Dictionary<string, object>()
                     {
@@ -91,7 +83,7 @@ public class AggregatedReportSink : IReportingSink
                         ["request_count"] = sts.Ok.Request.Count + sts.Fail.Request.Count,
                         ["ok"] = sts.Ok.Request.Count,
                         ["failed"] = sts.Fail.Request.Count,
-                        ["received"] = receiveCounter,
+                        ["received"] = recievedCounters.GetValueOrDefault(ss.ScenarioName),
                         ["rps"] = sts.Ok.Request.RPS,
                         ["min"] = sts.Ok.Latency.MinMs,
                         ["mean"] = sts.Ok.Latency.MeanMs,
@@ -139,7 +131,7 @@ public class AggregatedReportSink : IReportingSink
                 ss =>
                 {
                     var ssg = nodeStat.Value.ScenarioSubSubGroup?.GetValueOrDefault(ss.ScenarioName);
-                    var receiveCounter = nodeStat.Value.Counters?.GetValueOrDefault(ss.ScenarioName) ?? 0;
+                    //var receiveCounter = nodeStat.Value.Counters?.GetValueOrDefault(ss.ScenarioName) ?? 0;
 
                     return ss.StepStats.Where(sts => sts.StepName == "publish")?.Select(sts => new Dictionary<string, object>()
                     {
@@ -152,7 +144,7 @@ public class AggregatedReportSink : IReportingSink
                         ["request_count"] = sts.Ok.Request.Count + sts.Fail.Request.Count,
                         ["ok"] = sts.Ok.Request.Count,
                         ["failed"] = sts.Fail.Request.Count,
-                        ["received"] = receiveCounter,
+                        ["received"] = recievedCounters.GetValueOrDefault(ss.ScenarioName),
                         ["rps"] = sts.Ok.Request.RPS,
                         ["min"] = sts.Ok.Latency.MinMs,
                         ["mean"] = sts.Ok.Latency.MeanMs,
