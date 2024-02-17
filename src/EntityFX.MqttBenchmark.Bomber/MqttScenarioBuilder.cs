@@ -92,13 +92,17 @@ class MqttScenarioBuilder
         context.Logger.Information("{0}: Clear conter", context.ScenarioInfo.ScenarioName);
     }
 
-    private async Task Init(IScenarioInitContext arg)
+    private async Task Init(IScenarioInitContext context)
     {
         await Task.Delay(5000);
-        var settings = arg.CustomSettings.Get<MqttScenarioSettings>()
+        var settings = context.CustomSettings.Get<MqttScenarioSettings>()
             ?? new MqttScenarioSettings("test", MQTTnet.Protocol.MqttQualityOfServiceLevel.AtMostOnce,
             "localhost", 1883, 50, 1024
             );
+
+        var broker = new Uri($"mqtt://{settings.Server}:{settings.Port}/");
+        await mqttCounterClient.ClearCounter(broker.ToString(), settings.Topic);
+        context.Logger.Information("{0}: Clear conter", context.ScenarioInfo.ScenarioName);
 
         await ScenarioHelper.BuildMqttClientPool(_clientPool, settings);
     }

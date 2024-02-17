@@ -1,0 +1,58 @@
+{
+  "TestSuite": "entityfx.org",
+  "TestName": "test_mqtt_load",
+  "GlobalSettings": {
+    "ScenariosSettings": [
+      {
+        "ScenarioName": "benchmark-qos0-emqx-host-1cl",
+        "CustomSettings": {
+          "Topic": "benchmark/qos-0",
+          "Qos": 0,
+          "ClientsCount": 1,
+          "Server": "10.114.22.50",
+          "Port": 1883,
+          "MessageSize": 256
+        },
+        "LoadSimulationsSettings": [
+          {
+            "KeepConstant": [
+              1,
+              "00:00:30"
+            ]
+          }
+        ],
+        "MaxFailCount": 500
+      },
+      {
+        "ScenarioName": "benchmark-qos0-mosquitto-host-1cl",
+        "CustomSettings": {
+          "Topic": "benchmark/qos-0",
+          "Qos": 0,
+          "ClientsCount": 1,
+          "Server": "10.114.22.10",
+          "Port": 1883,
+          "MessageSize": 256
+        },
+        "LoadSimulationsSettings": [
+          {
+            "KeepConstant": [
+              1,
+              "00:00:30"
+            ]
+          }
+        ],
+        "MaxFailCount": 500
+      }
+    ],
+    "ReportFormats": [
+      "Html",
+      "Txt",
+      "Csv"
+    ],
+    "ReportingInterval": "00:00:05",
+    "TargetScenarios": [
+      "benchmark-qos0-emqx-host-1cl",
+      "benchmark-qos0-mosquitto-host-1cl"
+    ]
+  }
+}

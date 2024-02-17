@@ -1,15 +1,45 @@
 ﻿using System.Net;
 using System.Net.Http.Json;
+using Microsoft.Extensions.Logging;
 
 namespace EntityFX.MqttBenchmark;
 
 class MqttCounterClient
 {
+    private readonly ILogger<MqttCounterClient> logger;
     private readonly HttpClient httpClient;
 
-    public MqttCounterClient(HttpClient httpClientFactory)
+    private TimeSpan retryPeriod = TimeSpan.FromSeconds(1);
+
+    public MqttCounterClient(ILogger<MqttCounterClient> logger, HttpClient httpClientFactory)
     {
+        this.logger = logger;
         this.httpClient = httpClientFactory;
+    }
+
+    public async Task<int> GetCounterAndValidate(string broker, string topic, int attempts = 5, TimeSpan? retryPeriod = null)
+    {
+        int counterValue = 0;
+
+        TimeSpan actualPeriod = retryPeriod ?? this.retryPeriod;
+        for (int attempt = 1; attempt <= attempts; attempt++)
+        {
+            var currentCounter = await GetCounter(broker, topic);
+            logger.LogInformation($"Got counter={currentCounter} [Prev counter={counterValue}, Attempt={attempt}, Broker={broker}, Topic={topic}]");
+            Console.WriteLine($"Got counter={currentCounter} [Prev counter={counterValue}, Attempt={attempt}, Broker={broker}, Topic={topic}]");
+            if (attempt > 1 && currentCounter == counterValue) {
+                return currentCounter;
+            }
+
+            if (currentCounter >= counterValue) {
+                counterValue = currentCounter;
+            }
+
+            await Task.Delay(actualPeriod);
+            
+        }
+
+        return counterValue;
     }
 
     public async Task<int> GetCounter(string broker, string topic)
