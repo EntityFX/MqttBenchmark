@@ -27,6 +27,7 @@ static class ScenarioHelper
         {
             var mqttClientOptions = new MqttClientOptionsBuilder()
             .WithTcpServer(settings.Server, settings.Port)
+            .WithCleanSession(true)
             .WithTimeout(TimeSpan.FromSeconds(45))
             .Build();
             try

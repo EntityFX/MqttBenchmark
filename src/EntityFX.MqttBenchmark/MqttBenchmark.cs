@@ -186,7 +186,7 @@ class MqttBenchmark
                     options.Port = _settings.Broker.Port;
                 })
                 .WithClientId($"{_settings.ClientPrefix}-{test}")
-                .WithCleanSession(false)
+                .WithCleanSession(true)
                 .WithTimeout(_settings.PublishTimeout!.Value)
                 .Build();
 
