@@ -1,4 +1,5 @@
-﻿using Microsoft.Extensions.Configuration;
+﻿using System.Collections.Concurrent;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using MQTTnet;
 using NBomber;
@@ -11,7 +12,9 @@ namespace EntityFX.MqttBenchmark.Bomber;
 
 class MqttScenarioBuilder
 {
-    private ClientPool<(IMqttClient mqttClient, MqttScenarioSettings MqttScenarioSettings)> _clientPool;
+    //private ClientPool<(IMqttClient mqttClient, MqttScenarioSettings MqttScenarioSettings)> _clientPool;
+    private ConcurrentDictionary<int, (IMqttClient mqttClient, MqttScenarioSettings MqttScenarioSettings)> _clients;
+    
     private readonly ILogger _logger;
     private readonly IConfiguration configuration;
     private readonly Dictionary<string, long> scenarioCounters;
@@ -33,12 +36,15 @@ class MqttScenarioBuilder
     {
         var scenario = Scenario.Create(name, async context =>
         {
-            if (!_clientPool.Clients.Any())
+            if (!_clients.Any())
             {
                 return Response.Fail("No connection", "No connection", 0);
             }
 
-            var poolItem = _clientPool.GetClient(context.ScenarioInfo);
+            //var poolItem = _clientPool.GetClient(context.ScenarioInfo);
+
+            var index = context.ScenarioInfo.ThreadNumber % _clients.Count;
+            var poolItem = _clients[index];
 
             var message = StringHelper.GetString(poolItem.MqttScenarioSettings.MessageSize);
 
@@ -72,11 +78,11 @@ class MqttScenarioBuilder
         var settings = context.CustomSettings.Get<MqttScenarioSettings>();
         if (settings == null) return;
 
-        foreach (var client in _clientPool.Clients)
+        foreach (var client in _clients)
         {
-            await client.mqttClient.DisconnectAsync();
+            await client.Value.mqttClient.DisconnectAsync();
         }
-        _clientPool.DisposeClients();
+        
 
         var broker = new Uri($"mqtt://{settings.Server}:{settings.Port}/");
 
@@ -101,8 +107,10 @@ class MqttScenarioBuilder
 
         var broker = new Uri($"mqtt://{settings.Server}:{settings.Port}/");
         await mqttCounterClient.ClearCounter(broker.ToString(), settings.Topic);
-        context.Logger.Information("{0}: Clear conter", context.ScenarioInfo.ScenarioName);
-        _clientPool = new ClientPool<(IMqttClient mqttClient, MqttScenarioSettings MqttScenarioSettings)>();
-        await ScenarioHelper.BuildMqttClientPool(_clientPool, settings);
+        context.Logger.Information("{0}: Clear counter", context.ScenarioInfo.ScenarioName);
+        //_clientPool = new ClientPool<(IMqttClient mqttClient, MqttScenarioSettings MqttScenarioSettings)>();
+        
+        //await ScenarioHelper.BuildMqttClientPool(_clientPool, settings);
+        _clients = await ScenarioHelper.BuildClients(context.ScenarioInfo.ScenarioName, settings);
     }
 }
