@@ -11,7 +11,7 @@ namespace EntityFX.MqttBenchmark.Bomber;
 
 class MqttScenarioBuilder
 {
-    private readonly ClientPool<(IMqttClient mqttClient, MqttScenarioSettings MqttScenarioSettings)> _clientPool;
+    private ClientPool<(IMqttClient mqttClient, MqttScenarioSettings MqttScenarioSettings)> _clientPool;
     private readonly ILogger _logger;
     private readonly IConfiguration configuration;
     private readonly Dictionary<string, long> scenarioCounters;
@@ -27,7 +27,6 @@ class MqttScenarioBuilder
         this.configuration = configuration;
         this.scenarioCounters = scenarioCounters;
         this.mqttCounterClient = mqttCounterClient;
-        _clientPool = new ClientPool<(IMqttClient mqttClient, MqttScenarioSettings MqttScenarioSettings)>();
     }
 
     public ScenarioProps Build(string name)
@@ -103,7 +102,7 @@ class MqttScenarioBuilder
         var broker = new Uri($"mqtt://{settings.Server}:{settings.Port}/");
         await mqttCounterClient.ClearCounter(broker.ToString(), settings.Topic);
         context.Logger.Information("{0}: Clear conter", context.ScenarioInfo.ScenarioName);
-
+        _clientPool = new ClientPool<(IMqttClient mqttClient, MqttScenarioSettings MqttScenarioSettings)>();
         await ScenarioHelper.BuildMqttClientPool(_clientPool, settings);
     }
 }
