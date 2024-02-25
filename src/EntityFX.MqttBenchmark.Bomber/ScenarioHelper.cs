@@ -48,7 +48,8 @@ static class ScenarioHelper
         }
     }
     
-    internal static async Task<ConcurrentDictionary<int, (IMqttClient mqttClient, MqttScenarioSettings MqttScenarioSettings)>> 
+    internal static async Task<ConcurrentDictionary<int, 
+        (IMqttClient mqttClient, MqttScenarioSettings MqttScenarioSettings, MqttApplicationMessage MqttApplicationMessage)>> 
         BuildClients(string name, MqttScenarioSettings settings)
     {
         var mqttFactory = new MqttFactory();
@@ -56,11 +57,11 @@ static class ScenarioHelper
         var clients = Enumerable.Range(0, settings.ClientsCount).Select(_ =>
             mqttFactory.CreateMqttClient());
 
-        var clientsBag = new ConcurrentDictionary<int, (IMqttClient mqttClient, MqttScenarioSettings MqttScenarioSettings)>();
+        var clientsBag = new ConcurrentDictionary<int, 
+            (IMqttClient mqttClient, MqttScenarioSettings MqttScenarioSettings, MqttApplicationMessage)>();
         var id = 0;
         foreach (var client in clients)
         {
-            id++;
             var mqttClientOptions = new MqttClientOptionsBuilder()
                 .WithTcpServer(settings.Server, settings.Port)
                 .WithClientId($"{name}-{id}")
@@ -70,7 +71,16 @@ static class ScenarioHelper
 
             if (await TryConnect(client, mqttClientOptions))
             {
-                clientsBag.TryAdd(id, (client, settings));
+                var message = StringHelper.GetString(settings.MessageSize);
+
+                var applicationMessage = new MqttApplicationMessageBuilder()
+                    .WithTopic(settings.Topic)
+                    .WithQualityOfServiceLevel(settings.Qos)
+                    .WithPayload(message)
+                    .Build();
+
+                clientsBag.TryAdd(id, (client, settings, applicationMessage));
+                id++;
             }
         }
 

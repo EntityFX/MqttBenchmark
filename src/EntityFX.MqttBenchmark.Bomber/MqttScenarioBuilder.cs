@@ -13,7 +13,8 @@ namespace EntityFX.MqttBenchmark.Bomber;
 class MqttScenarioBuilder
 {
     //private ClientPool<(IMqttClient mqttClient, MqttScenarioSettings MqttScenarioSettings)> _clientPool;
-    private ConcurrentDictionary<int, (IMqttClient mqttClient, MqttScenarioSettings MqttScenarioSettings)> _clients;
+    private ConcurrentDictionary<int, 
+        (IMqttClient mqttClient, MqttScenarioSettings MqttScenarioSettings, MqttApplicationMessage MqttApplicationMessage)> _clients;
     
     private readonly ILogger _logger;
     private readonly IConfiguration configuration;
@@ -46,15 +47,8 @@ class MqttScenarioBuilder
             var index = context.ScenarioInfo.ThreadNumber % _clients.Count;
             var poolItem = _clients[index];
 
-            var message = StringHelper.GetString(poolItem.MqttScenarioSettings.MessageSize);
-
-            var applicationMessage = new MqttApplicationMessageBuilder()
-                .WithTopic(poolItem.MqttScenarioSettings.Topic)
-                .WithQualityOfServiceLevel(poolItem.MqttScenarioSettings.Qos)
-                .WithPayload(message)
-                .Build();
-
             var sizeBytes = poolItem.MqttScenarioSettings.MessageSize;
+            var applicationMessage = poolItem.MqttApplicationMessage;
 
             var sendStep = await Step.Run("publish", context, async () =>
             {
