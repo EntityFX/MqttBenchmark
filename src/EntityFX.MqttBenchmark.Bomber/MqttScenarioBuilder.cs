@@ -21,6 +21,8 @@ class MqttScenarioBuilder
     private readonly Dictionary<string, long> scenarioCounters;
     private readonly MqttCounterClient mqttCounterClient;
 
+    private long scenarioCounter = 0;
+
     public MqttScenarioBuilder(
         ILogger logger,
         IConfiguration configuration,
@@ -44,17 +46,23 @@ class MqttScenarioBuilder
 
             //var poolItem = _clientPool.GetClient(context.ScenarioInfo);
 
-            var index = context.ScenarioInfo.ThreadNumber % _clients.Count;
+            //var index = context.ScenarioInfo.ThreadNumber % _clients.Count;
+            var index = (int)(scenarioCounter % _clients.Count);      
             var poolItem = _clients[index];
+            Interlocked.Increment(ref scenarioCounter);
 
             var sizeBytes = poolItem.MqttScenarioSettings.MessageSize;
             var applicationMessage = poolItem.MqttApplicationMessage;
+            
+            if (scenarioCounter == 1 && applicationMessage.Payload.Length <= 1024 ) {
+                context.Logger.Information($"{name}: Message = {applicationMessage.ConvertPayloadToString()}");
+            }
 
             var sendStep = await Step.Run("publish", context, async () =>
             {
 
-                var result = await poolItem.mqttClient.PublishAsync(applicationMessage, CancellationToken.None);
-                return result.IsSuccess ? Response.Ok(sizeBytes: sizeBytes) :
+                var result = await poolItem.mqttClient.PublishAsync(applicationMessage);
+                return result.ReasonCode == MqttClientPublishReasonCode.Success ? Response.Ok(sizeBytes: sizeBytes) :
                     Response.Fail(result.ReasonCode.ToString(), result.ReasonString, sizeBytes);
             });
 
@@ -85,10 +93,13 @@ class MqttScenarioBuilder
 
         context.Logger.Information("{0}: Recieved conter={1}", context.ScenarioInfo.ScenarioName, counter);
 
+
         await Task.Delay(5000);
 
         await mqttCounterClient.ClearCounter(broker.ToString(), settings.Topic);
         context.Logger.Information("{0}: Clear conter", context.ScenarioInfo.ScenarioName);
+
+        context.Logger.Information("{0}: Scenario counter = {1}", context.ScenarioInfo.ScenarioName, scenarioCounter);
     }
 
     private async Task Init(IScenarioInitContext context)

@@ -6,6 +6,7 @@ using MQTTnet;
 using MQTTnet.Client;
 using MQTTnet.Protocol;
 using TimeSpan = System.TimeSpan;
+using System.Security.Cryptography;
 
 namespace EntityFX.MqttBenchmark;
 
@@ -109,10 +110,10 @@ class MqttBenchmark
             try
             {
                 msgSw.Restart();
-                var reasult = await mqttClient.PublishAsync(message);
+                var result = await mqttClient.PublishAsync(message);
                 elapsed = msgSw.Elapsed;
                 successDuration += elapsed;
-                if (reasult.ReasonCode == MqttClientPublishReasonCode.Success)
+                if (result.ReasonCode == MqttClientPublishReasonCode.Success)
                 {
                     succeed++;
                     totalBytes += message.Payload.Length;
@@ -232,7 +233,7 @@ class MqttBenchmark
     {
         var payload = !string.IsNullOrEmpty(_settings.Payload)
             ? _settings.Payload
-            : new string('a', _settings.MessageSize!.Value);
+            : GetString(_settings.MessageSize!.Value);
 
 
         var applicationMessage = new MqttApplicationMessageBuilder()
@@ -242,5 +243,15 @@ class MqttBenchmark
             .Build();
 
         return applicationMessage;
+    }
+
+    private static string GetString(int length) {
+        using(var rng = new RNGCryptoServiceProvider()) {
+            var bit_count = (length * 6);
+            var byte_count = ((bit_count + 7) / 8); // rounded up
+            var bytes = new byte[byte_count];
+            rng.GetBytes(bytes);
+            return Convert.ToBase64String(bytes);
+        }
     }
 }
