@@ -62,13 +62,14 @@ class MqttBenchmark
                 0,
                 0,
                 0,
-                0);
+                0, 0, string.Empty);
         }
 
         var successes = runResultsArray.Sum(r => r.Seccesses);
         var failures = runResultsArray.Sum(r => r.Failures);
         var ratio = successes > 0 ? successes / (decimal)(successes + failures) : 0;
         var totalBytes = runResultsArray.Sum(r => r.BytesSent);
+        var first = runResultsArray.FirstOrDefault();
 
         return new TotalResults(
             ratio, successes, failures, 0,
@@ -82,7 +83,7 @@ class MqttBenchmark
             (decimal)runResultsArray.Select(s => s.MessageTimeMean.TotalMilliseconds).StandardDeviation(),
             runResultsArray.Sum(r => r.MessagesPerSecond),
             runResultsArray.Average(r => r.MessagesPerSecond),
-            totalBytes);
+            totalBytes, first?.Qos ?? 0, first?.Topic ?? string.Empty);
     }
 
     private async Task<RunResults> SendMessages(IMqttClient mqttClient)
@@ -135,7 +136,8 @@ class MqttBenchmark
             }
 
             if ((_settings.MessageCount != null && total >= _settings.MessageCount - 1)
-                || (_settings.TestMaxTime != null && duration >= _settings.TestMaxTime))
+                || (_settings.TestMaxTime != null && duration >= _settings.TestMaxTime)
+                || (_settings.MaxFailure != null && failed >= _settings.MaxFailure))
             {
                 end = true;
             }
@@ -144,17 +146,19 @@ class MqttBenchmark
         }
 
         return GetResults(msgTimings, total,
-            mqttClient.Options.ClientId, successDuration, succeed, failed, totalBytes);
+            mqttClient.Options.ClientId, successDuration, succeed, failed, totalBytes, 
+            _settings.Qos ?? 0, _settings.Topic ?? string.Empty);
     }
 
     private RunResults GetResults(List<TimeSpan> msgTimings, long count,
-        string clientId, TimeSpan duration, long succeed, long failed, long totalBytes)
+        string clientId, TimeSpan duration, long succeed, long failed, long totalBytes,
+        int qos, string topic)
     {
         if (msgTimings?.Any() != true)
         {
             return new RunResults(clientId, succeed, failed, duration,
                 TimeSpan.Zero, TimeSpan.Zero, TimeSpan.Zero,
-                0, 0, totalBytes);
+                0, 0, totalBytes, qos, topic);
         }
 
 
@@ -165,7 +169,9 @@ class MqttBenchmark
             msgTimings.Max(),
             TimeSpan.FromMilliseconds(msgTimings.Average(s => s.TotalMilliseconds)),
             (decimal)standardDeviation,
-            (decimal)(duration > TimeSpan.Zero ? (succeed / duration.TotalSeconds) : 0), totalBytes
+            (decimal)(duration > TimeSpan.Zero ? (succeed / duration.TotalSeconds) : 0), totalBytes,
+            qos,
+            topic
         );
     }
 
@@ -238,7 +244,7 @@ class MqttBenchmark
 
         var applicationMessage = new MqttApplicationMessageBuilder()
             .WithTopic(_settings.Topic)
-            .WithQualityOfServiceLevel((MqttQualityOfServiceLevel)(_settings.Qos ?? 1))
+            .WithQualityOfServiceLevel((MqttQualityOfServiceLevel)(_settings.Qos ?? 0))
             .WithPayload(payload)
             .Build();
 

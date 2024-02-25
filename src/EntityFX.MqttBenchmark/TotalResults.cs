@@ -15,7 +15,9 @@ record TotalResults(
     decimal MessageTimeStandardDeviation,
     decimal MessagesPerSecond,
     decimal AverageMessagesPerSec,
-    long TotalBytesSent
+    long TotalBytesSent,
+    int Qos,
+    string Topic
 )
 {
     public long Received { get; set; } = Received;

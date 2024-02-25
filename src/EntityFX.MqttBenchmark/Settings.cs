@@ -41,7 +41,9 @@ class Settings : ICloneable
     public bool? Insecure { get; set; } = false;
 
     public TimeSpan? MessageDelayInterval { get; set; } = TimeSpan.FromMilliseconds(2);
-    
+
+    public int? MaxFailure { get;  set; } = 1000;
+
     public object Clone()
     {
         return this.MemberwiseClone();
