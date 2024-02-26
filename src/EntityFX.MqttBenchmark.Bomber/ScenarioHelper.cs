@@ -48,16 +48,16 @@ static class ScenarioHelper
         }
     }
     
-    internal static async Task<ConcurrentDictionary<int, 
+    internal static async Task<Dictionary<int, 
         (IMqttClient mqttClient, MqttScenarioSettings MqttScenarioSettings, MqttApplicationMessage MqttApplicationMessage)>> 
-        BuildClients(string name, MqttScenarioSettings settings)
+        BuildClients(Serilog.ILogger logger, string name, MqttScenarioSettings settings)
     {
         var mqttFactory = new MqttFactory();
 
         var clients = Enumerable.Range(0, settings.ClientsCount).Select(_ =>
             mqttFactory.CreateMqttClient());
 
-        var clientsBag = new ConcurrentDictionary<int, 
+        var clientsBag = new Dictionary<int, 
             (IMqttClient mqttClient, MqttScenarioSettings MqttScenarioSettings, MqttApplicationMessage)>();
         var id = 0;
         foreach (var client in clients)
@@ -69,7 +69,7 @@ static class ScenarioHelper
                 .WithTimeout(TimeSpan.FromSeconds(30))
                 .Build();
 
-            if (await TryConnect(client, mqttClientOptions))
+            if (await TryConnect(logger, client, mqttClientOptions))
             {
                 var message = StringHelper.GetString(settings.MessageSize);
 
@@ -87,7 +87,7 @@ static class ScenarioHelper
         return clientsBag;
     }
 
-    private static async Task<bool> TryConnect(IMqttClient mqttClient, MqttClientOptions mqttClientOptions)
+    private static async Task<bool> TryConnect(Serilog.ILogger logger, IMqttClient mqttClient, MqttClientOptions mqttClientOptions)
     {
         int attempts = 5;
 
@@ -101,9 +101,9 @@ static class ScenarioHelper
                     return true;
                 }
             }
-            catch
+            catch(Exception ex) 
             {
-                //ignore here
+                logger.Error(ex, nameof(TryConnect));
             }
             finally
             {

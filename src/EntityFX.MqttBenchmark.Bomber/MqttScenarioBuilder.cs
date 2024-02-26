@@ -13,7 +13,7 @@ namespace EntityFX.MqttBenchmark.Bomber;
 class MqttScenarioBuilder
 {
     //private ClientPool<(IMqttClient mqttClient, MqttScenarioSettings MqttScenarioSettings)> _clientPool;
-    private ConcurrentDictionary<int, 
+    private Dictionary<int, 
         (IMqttClient mqttClient, MqttScenarioSettings MqttScenarioSettings, MqttApplicationMessage MqttApplicationMessage)> _clients;
     
     private readonly ILogger _logger;
@@ -49,6 +49,7 @@ class MqttScenarioBuilder
             //var index = context.ScenarioInfo.ThreadNumber % _clients.Count;
             var index = (int)(scenarioCounter % _clients.Count);      
             var poolItem = _clients[index];
+            //context.Logger.Information("{0} - {1}", index, context.ScenarioInfo.ThreadNumber % _clients.Count);
             Interlocked.Increment(ref scenarioCounter);
 
             var sizeBytes = poolItem.MqttScenarioSettings.MessageSize;
@@ -116,6 +117,6 @@ class MqttScenarioBuilder
         //_clientPool = new ClientPool<(IMqttClient mqttClient, MqttScenarioSettings MqttScenarioSettings)>();
         
         //await ScenarioHelper.BuildMqttClientPool(_clientPool, settings);
-        _clients = await ScenarioHelper.BuildClients(context.ScenarioInfo.ScenarioName, settings);
+        _clients = await ScenarioHelper.BuildClients(context.Logger, context.ScenarioInfo.ScenarioName, settings);
     }
 }
