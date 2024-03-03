@@ -45,7 +45,7 @@ internal class Benchmark
 
         var startTimePath = DateTime.Now.ToString("s", CultureInfo.InvariantCulture).Replace(":", "_");
         var countersPath = Path.Combine("reports", this.settings.Name, startTimePath);
-        var aggregatedReportSink = new AggregatedReportSink(scenarioReceiveCounetrs);
+        var aggregatedReportSink = new AggregatedReportSink(scenarioReceiveCounetrs, countersPath);
 
 
         foreach (var scenarioGroup in scenarioGroups)
