@@ -23,11 +23,11 @@ static class CsvHelper
 
                 if ("time" == headerName.ToLowerInvariant())
                 {
-                    dataLine.DateTime = DateTime.Parse(lineItem[j]);
+                    dataLine.DateTime = DateTime.Parse(lineItem[j], CultureInfo.InvariantCulture);
                     continue;
                 }
 
-                dataLine.Values[headerName] = decimal.Parse(lineItem[j]);
+                dataLine.Values[headerName] = decimal.Parse(lineItem[j], CultureInfo.InvariantCulture);
             }
 
             result[dataLine.DateTime] = dataLine;
@@ -62,7 +62,7 @@ static class CsvHelper
             foreach (var value in item.Value.Values)
             {
                 sb.Append(separator);
-                sb.Append(value.Value);
+                sb.Append(value.Value.ToString(CultureInfo.InvariantCulture));
             }
             sb.AppendLine();
         }

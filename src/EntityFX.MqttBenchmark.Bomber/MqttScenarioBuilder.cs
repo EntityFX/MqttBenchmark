@@ -7,6 +7,7 @@ using NBomber.CSharp;
 using MQTTnet.Client;
 using NBomber.Contracts;
 using EntityFX.MqttBenchmark.Bomber.Settings;
+using System.Xml.Linq;
 
 namespace EntityFX.MqttBenchmark.Bomber;
 
@@ -19,6 +20,7 @@ class MqttScenarioBuilder
     private readonly ILogger _logger;
     private readonly IConfiguration configuration;
     private readonly Dictionary<string, long> scenarioCounters;
+    private readonly Dictionary<string, ScenarioTimeStats> scenarioStats;
     private readonly MqttCounterClient mqttCounterClient;
 
     private long scenarioCounter = 0;
@@ -27,16 +29,23 @@ class MqttScenarioBuilder
         ILogger logger,
         IConfiguration configuration,
         Dictionary<string, long> scenarioCounters,
+        Dictionary<string, ScenarioTimeStats> scenarioStats,
         MqttCounterClient mqttCounterClient)
     {
         _logger = logger;
         this.configuration = configuration;
         this.scenarioCounters = scenarioCounters;
+        this.scenarioStats = scenarioStats;
         this.mqttCounterClient = mqttCounterClient;
     }
 
     public ScenarioProps Build(string name)
     {
+        scenarioStats[name] = new ScenarioTimeStats()
+        {
+            BuildTime = DateTimeOffset.UtcNow
+        };
+
         var scenario = Scenario.Create(name, async context =>
         {
             if (!_clients.Any())
@@ -78,6 +87,7 @@ class MqttScenarioBuilder
 
     private async Task Clean(IScenarioInitContext context)
     {
+        scenarioStats[context.ScenarioInfo.ScenarioName].CleanStartTime = DateTimeOffset.UtcNow;
         var settings = context.CustomSettings.Get<MqttScenarioSettings>();
         if (settings == null) return;
 
@@ -85,7 +95,6 @@ class MqttScenarioBuilder
         {
             await client.Value.mqttClient.DisconnectAsync();
         }
-        
 
         var broker = new Uri($"mqtt://{settings.Server}:{settings.Port}/");
 
@@ -94,17 +103,20 @@ class MqttScenarioBuilder
 
         context.Logger.Information("{0}: Recieved conter={1}", context.ScenarioInfo.ScenarioName, counter);
 
-
-        await Task.Delay(5000);
+        await Task.Delay(10000);
 
         await mqttCounterClient.ClearCounter(broker.ToString(), settings.Topic);
         context.Logger.Information("{0}: Clear conter", context.ScenarioInfo.ScenarioName);
 
         context.Logger.Information("{0}: Scenario counter = {1}", context.ScenarioInfo.ScenarioName, scenarioCounter);
+
+        await Task.Delay(10000);
+        scenarioStats[context.ScenarioInfo.ScenarioName].CleanEndTime = DateTimeOffset.UtcNow;
     }
 
     private async Task Init(IScenarioInitContext context)
     {
+        scenarioStats[context.ScenarioInfo.ScenarioName].InitStartTime = DateTimeOffset.UtcNow;
         await Task.Delay(5000);
         var settings = context.CustomSettings.Get<MqttScenarioSettings>()
             ?? new MqttScenarioSettings("test", MQTTnet.Protocol.MqttQualityOfServiceLevel.AtMostOnce,
@@ -118,5 +130,6 @@ class MqttScenarioBuilder
         
         //await ScenarioHelper.BuildMqttClientPool(_clientPool, settings);
         _clients = await ScenarioHelper.BuildClients(context.Logger, context.ScenarioInfo.ScenarioName, settings);
+        scenarioStats[context.ScenarioInfo.ScenarioName].InitEndTime = DateTimeOffset.UtcNow;
     }
 }

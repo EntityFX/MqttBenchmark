@@ -1,15 +1,15 @@
 ﻿using System.Linq;
 
 //var csvPath = args.Length > 0 ? args[0] : "CPU-2024-03-02 20_51_24.csv";
-var csvPath = args.Length > 0 ? args[0] : "Bandwidth-2024-03-02 20_56_30.csv";
+var csvPath = args.Length > 0 ? args[0] : "CPU Usage-2024_03_03__17_00_00__22.10.csv";
 
-var aggregatePeriod = args.Length > 1 ? (args[1] == "*" ? TimeSpan.Parse(args[1]) : TimeSpan.FromSeconds(30)) : TimeSpan.FromSeconds(30);
+var aggregatePeriod = args.Length > 1 ? (args[1] != "*" ? TimeSpan.Parse(args[1]) : TimeSpan.FromSeconds(30)) : TimeSpan.FromSeconds(30);
 
 var startPeriod = args.Length > 2 ? DateTime.Parse(args[2]) : default;
 
 var endPeriod = args.Length > 3 ? DateTime.Parse(args[3]) : default;
 
-var mode = args.Length > 4 ? (args[4] == "*" ? args[4] : "*") : "*";
+var mode = args.Length > 4 ? (args[4] != "*" ? args[4] : "*") : "*";
 
 var csvContent = File.ReadAllLines(csvPath);
 

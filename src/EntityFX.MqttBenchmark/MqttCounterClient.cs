@@ -17,7 +17,7 @@ class MqttCounterClient
         this.httpClient = httpClientFactory;
     }
 
-    public async Task<int> GetCounterAndValidate(string broker, string topic, int attempts = 5, TimeSpan? retryPeriod = null)
+    public async Task<int> GetCounterAndValidate(string broker, string topic, int attempts = 25, TimeSpan? retryPeriod = null)
     {
         int counterValue = 0;
 

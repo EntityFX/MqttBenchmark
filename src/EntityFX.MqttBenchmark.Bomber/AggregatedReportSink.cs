@@ -16,14 +16,19 @@ public class AggregatedReportSink : IReportingSink
     private ScenarioParamsTemplate? scenarioParamsTemplate;
     private Dictionary<string, ScenarioParamsTemplate> scenarioSubSubGroup = new Dictionary<string, ScenarioParamsTemplate>();
     private readonly Dictionary<string, long> recievedCounters;
+    private readonly Dictionary<string, ScenarioTimeStats> scenarioTimeStats;
     private readonly string countersPath;
 
     private IConfiguration infraConfig;
     private IBaseContext context;
 
-    public AggregatedReportSink(Dictionary<string, long> recievedCounters, string countersPath)
+    public AggregatedReportSink(
+        Dictionary<string, long> recievedCounters,
+        Dictionary<string, ScenarioTimeStats> scenarioTimeStats,
+        string countersPath)
     {
         this.recievedCounters = recievedCounters;
+        this.scenarioTimeStats = scenarioTimeStats;
         this.countersPath = countersPath;
     }
 
@@ -73,7 +78,7 @@ public class AggregatedReportSink : IReportingSink
         await File.WriteAllTextAsync(Path.Combine(countersPath, scenario, "all.csv"), all);
     }
 
-    public Task SaveRealtimeStats(ScenarioStats[] stats)
+    public Task SaveRealtimeStats(NBomber.Contracts.Stats.ScenarioStats[] stats)
     {
         return Task.CompletedTask;
     }
@@ -120,7 +125,12 @@ public class AggregatedReportSink : IReportingSink
                     ["data_transfer_mean"] = sts.Ok.DataTransfer.MeanBytes,
                     ["data_transfer_max"] = sts.Ok.DataTransfer.MaxBytes,
                     ["data_transfer_all"] = sts.Ok.DataTransfer.AllBytes,
-                    ["start_date_time"] = nodeStats.TestInfo.Created.ToString("s", CultureInfo.InvariantCulture)
+                    ["start_date_time"] = nodeStats.TestInfo.Created.ToString("s", CultureInfo.InvariantCulture),
+                    ["test_build_time"] = scenarioTimeStats.GetValueOrDefault(ss.ScenarioName)?.BuildTime.ToString("s", CultureInfo.InvariantCulture) ?? string.Empty,
+                    ["test_init_start_time"] = scenarioTimeStats.GetValueOrDefault(ss.ScenarioName)?.InitStartTime.ToString("s", CultureInfo.InvariantCulture) ?? string.Empty,
+                    ["test_init_end_time"] = scenarioTimeStats.GetValueOrDefault(ss.ScenarioName)?.InitEndTime.ToString("s", CultureInfo.InvariantCulture) ?? string.Empty,
+                    ["test_clean_start_time"] = scenarioTimeStats.GetValueOrDefault(ss.ScenarioName)?.CleanStartTime.ToString("s", CultureInfo.InvariantCulture) ?? string.Empty,
+                    ["test_clean_end_time"] = scenarioTimeStats.GetValueOrDefault(ss.ScenarioName)?.CleanEndTime.ToString("s", CultureInfo.InvariantCulture) ?? string.Empty,
                 })?.FirstOrDefault() ?? new Dictionary<string, object>();
         });
 

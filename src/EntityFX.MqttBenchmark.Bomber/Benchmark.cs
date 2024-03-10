@@ -23,6 +23,7 @@ internal class Benchmark
     private readonly Dictionary<object, Dictionary<object, Dictionary<string, ScenarioParamsTemplate>>>[] scenarioGroups;
 
     private readonly Dictionary<string, long> scenarioReceiveCounetrs = new Dictionary<string, long>();
+    private readonly Dictionary<string, ScenarioTimeStats> scenarioTimeStats = new Dictionary<string, ScenarioTimeStats>();
 
     private InfluxDBSink influxDbSink = new();
 
@@ -45,7 +46,7 @@ internal class Benchmark
 
         var startTimePath = DateTime.Now.ToString("s", CultureInfo.InvariantCulture).Replace(":", "_");
         var countersPath = Path.Combine("reports", this.settings.Name, startTimePath);
-        var aggregatedReportSink = new AggregatedReportSink(scenarioReceiveCounetrs, countersPath);
+        var aggregatedReportSink = new AggregatedReportSink(scenarioReceiveCounetrs, scenarioTimeStats, countersPath);
 
 
         foreach (var scenarioGroup in scenarioGroups)
@@ -129,7 +130,7 @@ internal class Benchmark
         {
             NBomberRunner
                 .RegisterScenarios(
-                    new MqttScenarioBuilder(logger, configuration, scenarioReceiveCounetrs, mqttCounterClient)
+                    new MqttScenarioBuilder(logger, configuration, scenarioReceiveCounetrs, scenarioTimeStats, mqttCounterClient)
                     .Build(testItem.Key)
                 )
                 .LoadInfraConfig("infra-config.json")
@@ -151,7 +152,7 @@ internal class Benchmark
         .RegisterScenarios(
             scenarioSubSubGroup.Keys.Select(
                 s => new MqttScenarioBuilder(
-                    logger, configuration, scenarioReceiveCounetrs, mqttCounterClient).Build(s)).ToArray()
+                    logger, configuration, scenarioReceiveCounetrs, scenarioTimeStats, mqttCounterClient).Build(s)).ToArray()
         )
         .LoadInfraConfig("infra-config.json")
         .LoadConfig(fileName)
