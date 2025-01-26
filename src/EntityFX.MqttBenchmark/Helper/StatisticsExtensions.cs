@@ -1,4 +1,4 @@
-namespace EntityFX.MqttBenchmark.Helpers;
+namespace EntityFX.MqttBenchmark.Helper;
 
 static class StatisticsExtensions
 {
@@ -9,9 +9,9 @@ static class StatisticsExtensions
         {
             return 0;
         }
-        
+
         var average = arrayItems.Average();
-        var squareDiffSum = arrayItems.Select(m => Math.Pow((m - average), 2)).Sum();
+        var squareDiffSum = arrayItems.Select(m => Math.Pow(m - average, 2)).Sum();
         return Math.Sqrt(squareDiffSum / arrayItems.Count());
     }
 }

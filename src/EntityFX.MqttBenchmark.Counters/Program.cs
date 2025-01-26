@@ -43,7 +43,7 @@ MapApi(app, countersStore);
 
 app.Run();
 
-async Task<IMqttClient?> ConnectMqttAndSubscribe(MqttSettings mqttSettings)
+Task<IMqttClient?> ConnectMqttAndSubscribe(MqttSettings mqttSettings)
 {
     var mqttFactory = new MqttFactory();
 
@@ -99,7 +99,7 @@ async Task<IMqttClient?> ConnectMqttAndSubscribe(MqttSettings mqttSettings)
 
     var result = ConnectAsync(mqttClient, mqttClientOptions, brokerName);
 
-    return mqttClient;
+    return Task.FromResult<IMqttClient?>(mqttClient);
 }
 
 async Task<MqttClientConnectResult?> ConnectAsync(

@@ -2,7 +2,7 @@
 using System.Net.Http.Json;
 using Microsoft.Extensions.Logging;
 
-namespace EntityFX.MqttBenchmark;
+namespace EntityFX.MqttBenchmark.Scenario;
 
 class MqttCounterClient
 {
@@ -14,7 +14,7 @@ class MqttCounterClient
     public MqttCounterClient(ILogger<MqttCounterClient> logger, HttpClient httpClientFactory)
     {
         this.logger = logger;
-        this.httpClient = httpClientFactory;
+        httpClient = httpClientFactory;
     }
 
     public async Task<int> GetCounterAndValidate(string broker, string topic, int attempts = 25, TimeSpan? retryPeriod = null)
@@ -27,16 +27,18 @@ class MqttCounterClient
             var currentCounter = await GetCounter(broker, topic);
             logger.LogInformation($"Got counter={currentCounter} [Prev counter={counterValue}, Attempt={attempt}, Broker={broker}, Topic={topic}]");
             Console.WriteLine($"Got counter={currentCounter} [Prev counter={counterValue}, Attempt={attempt}, Broker={broker}, Topic={topic}]");
-            if (attempt > 1 && currentCounter == counterValue) {
+            if (attempt > 1 && currentCounter == counterValue)
+            {
                 return currentCounter;
             }
 
-            if (currentCounter >= counterValue) {
+            if (currentCounter >= counterValue)
+            {
                 counterValue = currentCounter;
             }
 
             await Task.Delay(actualPeriod);
-            
+
         }
 
         return counterValue;

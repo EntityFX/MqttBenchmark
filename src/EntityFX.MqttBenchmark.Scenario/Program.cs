@@ -1,5 +1,5 @@
 ﻿using System.Text.Json;
-using EntityFX.MqttBenchmark;
+using EntityFX.MqttBenchmark.Scenario;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -11,14 +11,14 @@ var httpSettings = builder.Configuration.GetSection("HttpClients").Get<Dictionar
 
 builder.Services.AddHttpClient<MqttCounterClient>(client =>
     {
-        client.BaseAddress = new Uri(httpSettings.GetValueOrDefault("MqttCounter", "http://localhost:5000"));
+        client.BaseAddress = new Uri(httpSettings!.GetValueOrDefault("MqttCounter", "http://localhost:5000"));
     });
 
 var testSettings = LoadSettings(args, builder, out var serviceProvider);
 
 
 var mqttCounterClient = serviceProvider.GetService<MqttCounterClient>();
-var benchmark = new Benchmark(testSettings, mqttCounterClient);
+var benchmark = new Benchmark(testSettings, mqttCounterClient!);
 
 var result = benchmark.Run();
 

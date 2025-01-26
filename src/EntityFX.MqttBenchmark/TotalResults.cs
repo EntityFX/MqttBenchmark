@@ -1,7 +1,6 @@
-﻿
-namespace EntityFX.MqttBenchmark;
+﻿namespace EntityFX.MqttBenchmark;
 
-record TotalResults(
+public record TotalResults(
     decimal Ratio,
     long Successes,
     long Failures,

@@ -4,8 +4,11 @@ namespace EntityFX.MqttBenchmark.Bomber;
 
 public class MqttScenarioSettings
 {
-    public MqttScenarioSettings(string topic, MqttQualityOfServiceLevel qos, string server, int port, int clientsCount, int messageSize)
+    public MqttScenarioSettings(
+        string topic, MqttQualityOfServiceLevel qos, string server, int port, 
+        int clientsCount, int messageSize)
     {
+        Topic = topic;
         Server = server;
         Port = port;
         ClientsCount = clientsCount;

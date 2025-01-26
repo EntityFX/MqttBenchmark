@@ -2,6 +2,6 @@
 {
     public class ScenarioParamsTemplate : ScenarioNameTemplate
     {
-        public Dictionary<string, object> Params { get; set; }
+        public Dictionary<string, object> Params { get; set; } = new Dictionary<string, object>();
     }
 }

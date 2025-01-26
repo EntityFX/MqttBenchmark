@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "EntityFX.MqttBenchmark.Cli": {
+      "commandName": "Project",
+      "commandLineArgs": "-t temperature -q 1 mqtt://localhost:1883"
+    }
+  }
+}

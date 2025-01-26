@@ -6,10 +6,9 @@ public class TimedHostedService : BackgroundService
 {
     private readonly ILogger<TimedHostedService> _logger;
     private readonly ConcurrentDictionary<(string Broker, string Topic), int> countersStore;
-    private int _executionCount;
 
     public TimedHostedService(ILogger<TimedHostedService> logger,
-    System.Collections.Concurrent.ConcurrentDictionary<(string Broker, string Topic), int> countersStore)
+    ConcurrentDictionary<(string Broker, string Topic), int> countersStore)
     {
         _logger = logger;
         this.countersStore = countersStore;

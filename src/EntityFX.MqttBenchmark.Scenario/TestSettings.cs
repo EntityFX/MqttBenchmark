@@ -1,7 +1,7 @@
-namespace EntityFX.MqttBenchmark
+namespace EntityFX.MqttBenchmark.Scenario
 {
 
-    class TestSettings
+    public class TestSettings
     {
         public Settings Settings { get; set; } = new();
 

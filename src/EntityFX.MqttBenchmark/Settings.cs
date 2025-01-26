@@ -1,8 +1,6 @@
-﻿
+﻿namespace EntityFX.MqttBenchmark;
 
-namespace EntityFX.MqttBenchmark;
-
-class Settings : ICloneable
+public class Settings : ICloneable
 {
     public Uri? Broker { get; set; }
 
@@ -23,18 +21,18 @@ class Settings : ICloneable
     public int? MessageCount { get; set; }
 
     public TimeSpan? TestMaxTime { get; set; }
-    
+
     public TimeSpan? WaitAfterTime { get; set; }
 
     public int? ConnectAttempts { get; set; }
 
     public int? Clients { get; set; }
-    
+
     public string? ClientPrefix { get; set; }
 
-    public string? ClientCert { get; set; } 
+    public string? ClientCert { get; set; }
 
-    public string? ClientKey { get; set; } 
+    public string? ClientKey { get; set; }
 
     public string? BrokerCaCert { get; set; }
 
@@ -42,10 +40,10 @@ class Settings : ICloneable
 
     public TimeSpan? MessageDelayInterval { get; set; } = TimeSpan.FromMilliseconds(2);
 
-    public int? MaxFailure { get;  set; } = 1000;
+    public int? MaxFailure { get; set; } = 1000;
 
     public object Clone()
     {
-        return this.MemberwiseClone();
+        return MemberwiseClone();
     }
 }

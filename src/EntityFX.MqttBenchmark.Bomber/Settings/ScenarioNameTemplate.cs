@@ -3,18 +3,18 @@
 
     public class ScenarioNameTemplate
     {
-        public string Group { get; set; }
+        public string Group { get; set; } = string.Empty;
 
-        public string GroupBy { get; set; }
+        public string GroupBy { get; set; } = string.Empty;
 
-        public string SubGroupBy { get; set; }
+        public string SubGroupBy { get; set; } = string.Empty;
 
-        public string Server { get; set; }
+        public string Server { get; set; } = string.Empty;
 
-        public string Topic { get; set; }
+        public string Topic { get; set; } = string.Empty;
 
-        public string ScenarioTemplateName { get; set; }
+        public string ScenarioTemplateName { get; set; } = string.Empty;
 
-        public string MessageSize { get; set; }
+        public string MessageSize { get; set; } = string.Empty;
     }
 }

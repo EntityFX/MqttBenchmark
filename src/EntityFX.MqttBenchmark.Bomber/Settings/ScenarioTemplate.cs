@@ -10,13 +10,13 @@ namespace EntityFX.MqttBenchmark.Bomber.Settings
     {
         internal class CustomSettingsTemplate
         {
-            public string Topic { get; set; }
+            public string Topic { get; set; } = string.Empty;
 
             public int Qos { get; set; }
 
             public int ClientsCount { get; set; }
 
-            public string Server { get; set; }
+            public string Server { get; set; } = string.Empty;
 
             public int Port { get; set; }
 
@@ -26,13 +26,15 @@ namespace EntityFX.MqttBenchmark.Bomber.Settings
         internal class LoadSimulationsSettingsTemplate
         {
             public object[] KeepConstant { get; set; }
+                = Array.Empty<object>();
         }
 
-        public string ScenarioName { get; set; }
+        public string ScenarioName { get; set; } = string.Empty;
 
-        public CustomSettingsTemplate CustomSettings { get; set; }
+        public CustomSettingsTemplate? CustomSettings { get; set; }
 
-        public LoadSimulationsSettingsTemplate[] LoadSimulationsSettings { get; set; }
+        public LoadSimulationsSettingsTemplate[] LoadSimulationsSettings { get; set; } 
+            = Array.Empty<LoadSimulationsSettingsTemplate>();
 
         public int MaxFailCount { get; set; }
 

@@ -1,6 +1,6 @@
 ﻿namespace EntityFX.MqttBenchmark;
 
-record RunResults (
+public record RunResults(
     string ClientId,
     long Seccesses,
     long Failures,

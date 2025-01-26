@@ -22,7 +22,7 @@ var httpSettings = builder.Configuration.GetSection("HttpClients").Get<Dictionar
 
 builder.Services.AddHttpClient<MqttCounterClient>(client =>
 {
-    client.BaseAddress = new Uri(httpSettings.GetValueOrDefault("MqttCounter", "http://localhost:5000"));
+    client.BaseAddress = new Uri(httpSettings!.GetValueOrDefault("MqttCounter", "http://localhost:5000"));
 });
 
 Console.WriteLine($"Use config: {appSettingsPath}");
@@ -37,7 +37,7 @@ var configuration = ScenarioHelper.InitConfiguration(host, args);
 var logger = host.Services.GetRequiredService<ILogger<MqttScenarioBuilder>>();
 var mqttCounterClient = host.Services.GetService<MqttCounterClient>();
 
-var benchmark = new Benchmark(logger, configuration, mqttCounterClient);
+var benchmark = new Benchmark(logger, configuration, mqttCounterClient!);
 benchmark.Run();
 
 string? GetExtraConfig(string[] args)

@@ -1,16 +1,16 @@
 ﻿using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.Json;
-using EntityFX.MqttBenchmark.Helpers;
 using MQTTnet;
 using MQTTnet.Client;
 using MQTTnet.Protocol;
 using TimeSpan = System.TimeSpan;
 using System.Security.Cryptography;
+using EntityFX.MqttBenchmark.Helper;
 
 namespace EntityFX.MqttBenchmark;
 
-class MqttBenchmark
+public class MqttBenchmark
 {
     private readonly Settings _settings;
 
@@ -35,14 +35,14 @@ class MqttBenchmark
                 clientTasks.Add(Task.Run(async () => await SendMessages(client)));
             }
         }
-        
+
         var results = await Task.WhenAll(clientTasks);
 
         var totalResults = CalculateTotalResults(results, testTimeSw.Elapsed);
         var endDateTime = DateTimeOffset.UtcNow;
         return new BenchmarkResults(
-            testName, clientsCount, totalResults, results, 
-            startDateTime, endDateTime,  _settings);
+            testName, clientsCount, totalResults, results,
+            startDateTime, endDateTime, _settings);
     }
 
     private TotalResults CalculateTotalResults(IEnumerable<RunResults> runResults, TimeSpan testTime)
@@ -117,7 +117,7 @@ class MqttBenchmark
                 if (result.ReasonCode == MqttClientPublishReasonCode.Success)
                 {
                     succeed++;
-                    totalBytes += message.Payload.Length;
+                    totalBytes += message.PayloadSegment.Count;
                 }
                 else
                 {
@@ -135,9 +135,9 @@ class MqttBenchmark
                 msgTimings.Add(elapsed);
             }
 
-            if ((_settings.MessageCount != null && total >= _settings.MessageCount - 1)
-                || (_settings.TestMaxTime != null && duration >= _settings.TestMaxTime)
-                || (_settings.MaxFailure != null && failed >= _settings.MaxFailure))
+            if (_settings.MessageCount != null && total >= _settings.MessageCount - 1
+                || _settings.TestMaxTime != null && duration >= _settings.TestMaxTime
+                || _settings.MaxFailure != null && failed >= _settings.MaxFailure)
             {
                 end = true;
             }
@@ -146,7 +146,7 @@ class MqttBenchmark
         }
 
         return GetResults(msgTimings, total,
-            mqttClient.Options.ClientId, successDuration, succeed, failed, totalBytes, 
+            mqttClient.Options.ClientId, successDuration, succeed, failed, totalBytes,
             _settings.Qos ?? 0, _settings.Topic ?? string.Empty);
     }
 
@@ -169,7 +169,7 @@ class MqttBenchmark
             msgTimings.Max(),
             TimeSpan.FromMilliseconds(msgTimings.Average(s => s.TotalMilliseconds)),
             (decimal)standardDeviation,
-            (decimal)(duration > TimeSpan.Zero ? (succeed / duration.TotalSeconds) : 0), totalBytes,
+            (decimal)(duration > TimeSpan.Zero ? succeed / duration.TotalSeconds : 0), totalBytes,
             qos,
             topic
         );
@@ -239,7 +239,7 @@ class MqttBenchmark
     {
         var payload = !string.IsNullOrEmpty(_settings.Payload)
             ? _settings.Payload
-            : GetString(_settings.MessageSize!.Value);
+            : GetRandomString(_settings.MessageSize!.Value);
 
 
         var applicationMessage = new MqttApplicationMessageBuilder()
@@ -251,13 +251,11 @@ class MqttBenchmark
         return applicationMessage;
     }
 
-    private static string GetString(int length) {
-        using(var rng = new RNGCryptoServiceProvider()) {
-            var bit_count = (length * 6);
-            var byte_count = ((bit_count + 7) / 8); // rounded up
-            var bytes = new byte[byte_count];
-            rng.GetBytes(bytes);
-            return Convert.ToBase64String(bytes);
-        }
+    private static string GetRandomString(int length)
+    {
+        var bit_count = length * 6;
+        var byte_count = (bit_count + 7) / 8; // rounded up
+        var bytes = RandomNumberGenerator.GetBytes(byte_count);
+        return Convert.ToBase64String(bytes);
     }
 }

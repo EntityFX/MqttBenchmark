@@ -19,8 +19,8 @@ public class AggregatedReportSink : IReportingSink
     private readonly Dictionary<string, ScenarioTimeStats> scenarioTimeStats;
     private readonly string countersPath;
 
-    private IConfiguration infraConfig;
-    private IBaseContext context;
+    private IConfiguration? infraConfig;
+    private IBaseContext? context;
 
     public AggregatedReportSink(
         Dictionary<string, long> recievedCounters,

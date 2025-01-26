@@ -44,6 +44,11 @@ internal class Benchmark
 
         var scenarioTemplates = JsonSerializer.Deserialize<Dictionary<string, ScenarioTemplate>>(scenariosTemplateFile);
 
+        if (null == scenarioTemplates)
+        {
+            return;
+        }
+
         var startTimePath = DateTime.Now.ToString("s", CultureInfo.InvariantCulture).Replace(":", "_");
         var countersPath = Path.Combine("reports", this.settings.Name, startTimePath);
         var aggregatedReportSink = new AggregatedReportSink(scenarioReceiveCounetrs, scenarioTimeStats, countersPath);
@@ -79,7 +84,18 @@ internal class Benchmark
 
                     var configTemplateJson = JsonSerializer.Deserialize<JsonObject>(configTemplateFile);
 
+                    if (null == configTemplateJson)
+                    {
+                        continue;
+                    }
+
                     var globalSettings = configTemplateJson["GlobalSettings"];
+
+                    if (null == globalSettings)
+                    {
+                        continue;
+                    }
+
                     globalSettings["ScenariosSettings"] = JsonSerializer.SerializeToNode(templates);
                     globalSettings["TargetScenarios"] = JsonSerializer.SerializeToNode(scenarioSubSubGroup.Keys.ToArray());
 
@@ -241,6 +257,11 @@ internal class Benchmark
 
                 foreach (var paramsValue in paramsValues)
                 {
+                    if (null == paramsValue.Value)
+                    {
+                        continue;
+                    }
+
                     if (replaceString.Contains($"{{{testParam.Key}:{{{paramsValue.Key}}}}}"))
                     {
                         replaceString = replaceString.Replace($"{{{testParam.Key}:{{{paramsValue.Key}}}}}",

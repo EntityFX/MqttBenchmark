@@ -1,0 +1,61 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<OutputType>Exe</OutputType>
+		<TargetFramework>net6.0</TargetFramework>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<PackageReference Include="Microsoft.Extensions.Http" Version="8.0.0" />
+		<PackageReference Include="MQTTnet.Extensions.ManagedClient" Version="4.3.3.952" />
+		<PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.0" />
+	</ItemGroup>
+
+	<ItemGroup>
+	  <ProjectReference Include="..\EntityFX.MqttBenchmark\EntityFX.MqttBenchmark.csproj" />
+	</ItemGroup>
+
+	<ItemGroup>
+	  <None Update="appsettings.c1_2_4_8_12_16_24.emqx_mosquitto.json">
+	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+	  </None>
+	  <None Update="appsettings.c1_2_4_8_12_16_24.emqx_mosquitto.Production.json">
+		<DependentUpon>appsettings.c1_2_4_8_12_16_24.emqx_mosquitto.json</DependentUpon>
+	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+	  </None>
+	  <None Update="appsettings.qos2_c1__12.json">
+	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+	  </None>
+	  <None Update="appsettings.qos2_c1__12.Production.json">
+		<DependentUpon>appsettings.qos2_c1__12.json</DependentUpon>
+	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+	  </None>
+	  <None Update="appsettings.qos2_c1__6.Production.json">
+		<DependentUpon>appsettings.qos2_c1__6.json</DependentUpon>
+	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+	  </None>
+	  <None Update="appsettings.qos2_c1__6.json">
+	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+	  </None>
+	  <None Update="appsettings.json">
+	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+	  </None>
+	  <None Update="appsettings.Development.json">
+	    <DependentUpon>appsettings.json</DependentUpon>
+	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+	  </None>
+	  <None Update="appsettings.MicroTest.json">
+		<DependentUpon>appsettings.json</DependentUpon>
+	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+	  </None>
+	  <None Update="appsettings.Production.json">
+	    <DependentUpon>appsettings.json</DependentUpon>
+	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+	  </None>
+	  <None Update="Run.ps1">
+	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+	  </None>
+	</ItemGroup>
+</Project>

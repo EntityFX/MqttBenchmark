@@ -1,9 +1,9 @@
 using System;
 using System.Globalization;
 using System.Text.Json;
-using EntityFX.MqttBenchmark.Helpers;
+using EntityFX.MqttBenchmark.Scenario.Helpers;
 
-namespace EntityFX.MqttBenchmark
+namespace EntityFX.MqttBenchmark.Scenario
 {
 
     class Benchmark
@@ -16,8 +16,8 @@ namespace EntityFX.MqttBenchmark
         {
             _testSettings = testSettings;
             this.mqttCounterClient = mqttCounterClient;
-            var outputPath = _testSettings.OutputPath;
-            var name = _testSettings.Name ?? string.Empty;
+            var outputPath = _testSettings?.OutputPath ?? String.Empty;
+            var name = _testSettings?.Name ?? string.Empty;
             _outputPath = Path.Combine(outputPath, name,
                 DateTime.Now.ToString("s", CultureInfo.InvariantCulture)
                     .Replace(":", "_"));

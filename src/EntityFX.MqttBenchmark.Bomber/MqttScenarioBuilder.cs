@@ -15,7 +15,8 @@ class MqttScenarioBuilder
 {
     //private ClientPool<(IMqttClient mqttClient, MqttScenarioSettings MqttScenarioSettings)> _clientPool;
     private Dictionary<int, 
-        (IMqttClient mqttClient, MqttScenarioSettings MqttScenarioSettings, MqttApplicationMessage MqttApplicationMessage)> _clients;
+        (IMqttClient mqttClient, MqttScenarioSettings MqttScenarioSettings, MqttApplicationMessage MqttApplicationMessage)> 
+        _clients = new Dictionary<int, (IMqttClient mqttClient, MqttScenarioSettings MqttScenarioSettings, MqttApplicationMessage MqttApplicationMessage)>();
     
     private readonly ILogger _logger;
     private readonly IConfiguration configuration;
@@ -63,8 +64,13 @@ class MqttScenarioBuilder
 
             var sizeBytes = poolItem.MqttScenarioSettings.MessageSize;
             var applicationMessage = poolItem.MqttApplicationMessage;
+
+            if (null == applicationMessage)
+            {
+                return Response.Fail();
+            }
             
-            if (scenarioCounter == 1 && applicationMessage.Payload.Length <= 1024 ) {
+            if (scenarioCounter == 1 && applicationMessage!.PayloadSegment.Count <= 1024 ) {
                 context.Logger.Information($"{name}: Message = {applicationMessage.ConvertPayloadToString()}");
             }
 
