@@ -1,4 +1,6 @@
 using EntityFX.MqttBenchmark.Calibration;
+using EntityFX.MqttBenchmark.Campaign;
+using System.Text.Json;
 
 return await Cli.RunAsync(args);
 
@@ -15,6 +17,13 @@ internal static class Cli
         try
         {
             var options = Parse(args.Skip(1).ToArray());
+            if (args[0] == "preflight" || (options.TryGetValue("config", out var configPath) &&
+                !string.IsNullOrWhiteSpace(configPath) && IsV3(configPath)))
+            {
+                using var cancellation = new CancellationTokenSource();
+                Console.CancelKeyPress += (_, eventArgs) => { eventArgs.Cancel = true; cancellation.Cancel(); };
+                return await CampaignCommands.ExecuteAsync(args[0], options, cancellation.Token);
+            }
             return args[0] switch
             {
                 "matrix" => await RunMatrixAsync(options),
@@ -121,7 +130,19 @@ internal static class Cli
     private static void PrintHelp()
     {
         Console.WriteLine("MqttBenchmark reproducible calibration pipeline");
+        Console.WriteLine("  preflight --stand <broker-stand.v1.json> --config <benchmark-campaign.v3.json> --output <new-dir> [--broker <name>]");
+        Console.WriteLine("  matrix --stand <json> --config <v3-json> --campaign <directory> [--resume] [--broker <name>] [--max-runs <n>] [--dry-run]");
+        Console.WriteLine("  aggregate --config <v3-json> --raw <campaign-dir> --output <new-dir>");
+        Console.WriteLine("  v3 stand operations also accept --docker-executable <path>, --benchmark-repo <dir>, --stand-script <path>.");
+        Console.WriteLine("Legacy v2:");
         Console.WriteLine("  matrix --config <json> --output <raw-root> [--campaign <id>] [--broker <name>] [--max-runs <n>] [--dry-run]");
         Console.WriteLine("  aggregate --config <json> --raw <campaign-dir> --output <dir> --mqtt-y-repo <dir> [--benchmark-repo <dir>]");
+    }
+
+    private static bool IsV3(string path)
+    {
+        using var document = JsonDocument.Parse(File.ReadAllBytes(path));
+        return document.RootElement.TryGetProperty("schemaVersion", out var version) &&
+            version.ValueKind == JsonValueKind.Number && version.GetInt32() == 3;
     }
 }

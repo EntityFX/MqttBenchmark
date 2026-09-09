@@ -19,3 +19,7 @@ Version.cpp
 */obj/*
 .superpowers/
 *.v2
+/artifacts/
+/campaigns/
+/results/raw/v3/
+/config/*.local.json

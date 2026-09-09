@@ -1,5 +1,12 @@
 # MqttBenchmark
 
+The four-broker stand uses [campaign schema v3](docs/campaign-v3.md), with 288 keys,
+identified exact-size payloads, immutable retry/resume, protocol preflight and
+`broker-observations.v3.json` for MqttY calibration. Start with
+`config/benchmark-campaign.v3.json` and `config/broker-stand.v1.json`.
+
+## Legacy schema v2
+
 The reproducible calibration pipeline is driven by
 `config/benchmark-matrix.v2.json`. The versioned default expands to four brokers,
 two exact payload sizes, three QoS levels, eight client counts and ten repeats
