@@ -2,12 +2,15 @@ name: mqttbenchmark-brokers
 
 x-broker-defaults: &broker-defaults
   restart: unless-stopped
-  mem_limit: 512m
+  mem_limit: 4g
   cpuset: "0"
+  network_mode: host
+  labels:
+    mqttbenchmark.broker: "true"
   logging:
     driver: local
     options:
-      max-size: 10m
+      max-size: 1m
       max-file: "3"
 
 services:
@@ -17,16 +20,14 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.aedes
-    image: local/mqttbenchmark-aedes:1.1.2
+    image: ${AEDES_IMAGE:?Resolve Aedes image identity before starting the stand.}
     container_name: aedes
-    ports: ["1883:1883"]
 
   mosquitto:
     <<: *broker-defaults
     profiles: [mosquitto]
-    image: eclipse-mosquitto:2.1.2@sha256:1111111111111111111111111111111111111111111111111111111111111111
+    image: ${MOSQUITTO_IMAGE:?Resolve Mosquitto image identity before starting the stand.}
     container_name: mosquitto
-    ports: ["2883:1883"]
     volumes:
       - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
     tmpfs: [/mosquitto/data]
@@ -34,11 +35,11 @@ services:
   activemq:
     <<: *broker-defaults
     profiles: [activemq]
-    image: apache/activemq-classic:6.3.2@sha256:2222222222222222222222222222222222222222222222222222222222222222
+    build:
+      context: .
+      dockerfile: activemq/Dockerfile
+    image: ${ACTIVEMQ_IMAGE:?Resolve ActiveMQ image identity before starting the stand.}
     container_name: activemq
-    ports:
-      - "3883:1883"
-      - "${CONTROL_INTERFACE:-127.0.0.1}:8161:8161"
     volumes:
       - ./activemq/activemq.xml:/opt/activemq/conf/activemq.xml:ro
     tmpfs: [/opt/activemq/data]
@@ -46,11 +47,8 @@ services:
   emqx:
     <<: *broker-defaults
     profiles: [emqx]
-    image: emqx/emqx:6.3.0@sha256:3b6d9c0c419930074b7e0e6cba07baceea584b2094d22f16ff02f6c075c3d5b8
+    image: ${EMQX_IMAGE:?Resolve EMQX image identity before starting the stand.}
     container_name: emqx
-    ports:
-      - "4883:1883"
-      - "${CONTROL_INTERFACE:-127.0.0.1}:18083:18083"
     volumes:
       - ./emqx/emqx.conf:/opt/emqx/etc/emqx.conf:ro
     tmpfs: [/opt/emqx/data]

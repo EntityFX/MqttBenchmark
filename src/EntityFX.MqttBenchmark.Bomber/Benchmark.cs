@@ -149,7 +149,7 @@ internal class Benchmark
                     new MqttScenarioBuilder(logger, configuration, scenarioReceiveCounetrs, scenarioTimeStats, mqttCounterClient)
                     .Build(testItem.Key)
                 )
-                .LoadInfraConfig("infra-config.json")
+                .LoadInfraConfig(InfraConfigEnvironmentResolver.ResolveToTemporaryFile("infra-config.json"))
                 .LoadConfig(fileName)
                 .WithReportFileName(testItem.Key)
                 .WithReportFolder(Path.Combine("reports", this.settings.Name, startTimePath, testItem.Key))
@@ -170,7 +170,7 @@ internal class Benchmark
                 s => new MqttScenarioBuilder(
                     logger, configuration, scenarioReceiveCounetrs, scenarioTimeStats, mqttCounterClient).Build(s)).ToArray()
         )
-        .LoadInfraConfig("infra-config.json")
+        .LoadInfraConfig(InfraConfigEnvironmentResolver.ResolveToTemporaryFile("infra-config.json"))
         .LoadConfig(fileName)
         .WithReportFileName(firstTest)
         .WithReportFolder(Path.Combine("reports", this.settings.Name, startTimePath, firstTest))

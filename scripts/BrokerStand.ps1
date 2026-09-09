@@ -50,7 +50,7 @@ function Test-BrokerStandInventory {
     }
 
     $deploymentMode = [string](Get-RequiredProperty $Inventory 'deploymentMode')
-    if ($deploymentMode -notin @('singleHost', 'distributed')) {
+    if ($deploymentMode -notin @('singleHostSequential', 'distributedHosts')) {
         throw "Unsupported deployment mode '$deploymentMode'."
     }
 
@@ -67,7 +67,7 @@ function Test-BrokerStandInventory {
     }
 
     $loaded = @($brokers | Where-Object { $_.loaded -eq $true })
-    if ($deploymentMode -eq 'singleHost' -and $loaded.Count -ne 1) {
+    if ($deploymentMode -eq 'singleHostSequential' -and $loaded.Count -ne 1) {
         throw 'Single-host mode requires exactly one loaded broker.'
     }
 
@@ -81,20 +81,28 @@ function Test-BrokerStandInventory {
         $endpoints[$mqttUri] = $true
 
         [void](Get-RequiredProperty $broker 'image')
-        $digest = [string](Get-RequiredProperty $broker 'digest')
-        if ($digest -notmatch '^sha256:[0-9a-f]{64}$') {
-            throw "Broker '$($broker.name)' must have an immutable sha256 digest."
+        $digestProperty = $broker.PSObject.Properties['digest']
+        $digest = if ($null -eq $digestProperty) { '' } else { [string]$digestProperty.Value }
+        $provenance = $broker.PSObject.Properties['digestProvenance']
+        if ($broker.name -eq $Inventory.activeBroker -and ($digest -notmatch '^sha256:[0-9a-f]{64}$' -or $digest -match '^sha256:(.)\1{63}$' -or
+            $null -eq $provenance -or $provenance.Value.status -ne 'verified')) {
+            throw "Broker '$($broker.name)' has unresolved image identity; resolve an immutable digest with verified provenance before deployment."
         }
 
         $cpuset = [string](Get-RequiredProperty $broker 'cpuset')
         if ($cpuMode -eq 'singleCorePinned' -and $cpuset -notmatch '^\d+$') {
             throw "Broker '$($broker.name)' must pin exactly one CPU in singleCorePinned mode."
         }
+        if ($cpuMode -eq 'hostAllCores' -and -not [string]::IsNullOrWhiteSpace($cpuset)) {
+            throw "Broker '$($broker.name)' must not define cpuset in hostAllCores mode."
+        }
 
-        [void](Get-RequiredProperty $broker 'memoryLimit')
+        if ([Int64](Get-RequiredProperty $broker 'memoryLimit') -ne 4294967296) {
+            throw "Broker '$($broker.name)' must use the 4294967296-byte baseline memory limit."
+        }
     }
 
-    if ($deploymentMode -eq 'singleHost' -and $loaded[0].name -ne $Inventory.activeBroker) {
+    if ($deploymentMode -eq 'singleHostSequential' -and $loaded[0].name -ne $Inventory.activeBroker) {
         throw 'The active broker must be the single loaded broker.'
     }
 
@@ -119,7 +127,8 @@ function Invoke-Docker {
     param([Parameter(Mandatory = $true)][string[]]$Arguments)
 
     $result = & $DockerExecutable @Arguments 2>&1
-    if ($LASTEXITCODE -ne 0) {
+    $exitCode = if (Test-Path Variable:LASTEXITCODE) { $LASTEXITCODE } else { 0 }
+    if ($exitCode -ne 0) {
         throw "Docker command failed: $($Arguments -join ' ')"
     }
 
@@ -127,7 +136,80 @@ function Invoke-Docker {
 }
 
 function Get-ComposePath {
-    return [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\docker\brokers\compose.yml'))
+    foreach ($candidate in @((Join-Path $PSScriptRoot 'docker\brokers\compose.yml'), (Join-Path $PSScriptRoot '..\docker\brokers\compose.yml'))) {
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) { return [IO.Path]::GetFullPath($candidate) }
+    }
+    throw 'Broker compose file was not found.'
+}
+
+function New-EffectiveComposeOverride {
+    param([Parameter(Mandatory = $true)]$Inventory, [Parameter(Mandatory = $true)]$Broker)
+
+    New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
+    $port = if ($Inventory.deploymentMode -eq 'singleHostSequential') { $Broker.singleHostMqttPort } else { $Broker.distributedMqttPort }
+    $image = "$($Broker.image)@$($Broker.digest)"
+    $lines = @('services:', "  $($Broker.serviceName):", "    image: $image", '    network_mode: host', '    mem_limit: 4g', '    environment:', "      - MQTT_PORT=$port", "      - CONTROL_INTERFACE=$($Inventory.controlInterface)")
+    if ($Inventory.cpuMode -eq 'singleCorePinned') { $lines += "    cpuset: `"$($Broker.cpuset)`"" }
+    if ($null -ne $Broker.managementUri) {
+        $management = [Uri]$Broker.managementUri
+        $lines += "      - `"$($Inventory.controlInterface):$($management.Port):$($management.Port)`""
+    }
+    $path = Join-Path $OutputDirectory 'effective-compose.yml'
+    Set-Content -LiteralPath $path -Value $lines
+    return $path
+}
+
+function Stop-OtherStandContainers {
+    param([Parameter(Mandatory = $true)]$Inventory, [Parameter(Mandatory = $true)]$Broker)
+
+    if ($Inventory.deploymentMode -ne 'singleHostSequential') { return }
+    $names = Invoke-Docker @('--context', [string]$Inventory.dockerContext, 'ps', '-a', '--filter', 'label=mqttbenchmark.broker=true', '--format', '{{.Names}}')
+    foreach ($name in @($names -split "`r?`n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })) {
+        if ($name -ne $Broker.containerName) {
+            Invoke-Docker @('--context', [string]$Inventory.dockerContext, 'rm', '-f', $name) | Out-Null
+        }
+    }
+}
+
+function Test-MqttReadiness {
+    param([Parameter(Mandatory = $true)][string]$MqttUri)
+
+    $uri = [Uri]$MqttUri
+    if ($uri.Scheme -ne 'mqtt') {
+        throw "MQTT readiness requires an mqtt URI, got '$MqttUri'."
+    }
+
+    $client = [System.Net.Sockets.TcpClient]::new()
+    try {
+        try {
+            $connect = $client.ConnectAsync($uri.Host, $uri.Port)
+            if (-not $connect.Wait(5000)) {
+                throw "MQTT readiness timed out while connecting to '$MqttUri'."
+            }
+        }
+        catch {
+            throw "MQTT readiness failed while connecting to '$MqttUri'."
+        }
+
+        $stream = $client.GetStream()
+        $packet = [byte[]](0x10, 0x12, 0x00, 0x04, 0x4d, 0x51, 0x54, 0x54, 0x04, 0x02, 0x00, 0x05, 0x00, 0x06, 0x68, 0x65, 0x61, 0x6c, 0x74, 0x68)
+        $stream.Write($packet, 0, $packet.Length)
+        $stream.ReadTimeout = 5000
+        $response = New-Object byte[] 4
+        $offset = 0
+        while ($offset -lt $response.Length) {
+            $count = $stream.Read($response, $offset, $response.Length - $offset)
+            if ($count -eq 0) { throw "MQTT readiness received an incomplete CONNACK from '$MqttUri'." }
+            $offset += $count
+        }
+
+        if ($response[0] -ne 0x20 -or $response[1] -ne 0x02 -or $response[2] -ne 0x00 -or $response[3] -ne 0x00) {
+            throw "MQTT readiness received a non-success CONNACK from '$MqttUri'."
+        }
+    }
+    finally {
+        $client.Dispose()
+    }
 }
 
 function Write-Capture {
@@ -143,29 +225,36 @@ function Write-Capture {
     $context = [string]$Inventory.dockerContext
     $container = [string](Get-RequiredProperty $Broker 'containerName')
     $version = Invoke-Docker @('--context', $context, 'version', '--format', '{{json .}}')
-    Set-Content -LiteralPath (Join-Path $OutputDirectory 'versions.json') -Value $version -NoNewline
+    $imageIdentity = Invoke-Docker @('--context', $context, 'image', 'inspect', '--format', '{{json .}}', "$($Broker.image)@$($Broker.digest)")
+    [ordered]@{ docker = $version; image = $imageIdentity; requestedImage = "$($Broker.image)@$($Broker.digest)" } |
+        ConvertTo-Json | Set-Content -LiteralPath (Join-Path $OutputDirectory 'versions.json') -NoNewline
 
     Start-Sleep -Seconds 1
     $stats = Invoke-Docker @('--context', $context, 'stats', '--no-stream', '--format', '{{json .}}', $container)
     $throttling = Invoke-Docker @('--context', $context, 'exec', $container, 'cat', '/sys/fs/cgroup/cpu.stat')
+    $rss = Invoke-Docker @('--context', $context, 'exec', $container, 'cat', '/sys/fs/cgroup/memory.current')
     $network = Invoke-Docker @('--context', $context, 'exec', $container, 'cat', '/proc/net/dev')
     $diskIo = Invoke-Docker @('--context', $context, 'exec', $container, 'cat', '/proc/self/io')
     $connections = Invoke-Docker @('--context', $context, 'exec', $container, 'ss', '-tan')
     [ordered]@{
         timestamp = [DateTimeOffset]::UtcNow.ToString('O')
         container = $container
-        cpuAndRss = $stats
-        cpuThrottling = $throttling
+        dockerStats = $stats
+        cgroupCpuAndThrottle = $throttling
+        cgroupRssBytes = $rss
         network = $network
         diskIo = $diskIo
         connections = $connections
-    } | ConvertTo-Json -Compress | Set-Content -LiteralPath (Join-Path $OutputDirectory 'telemetry.ndjson') -NoNewline
+    } | ConvertTo-Json -Compress | Add-Content -LiteralPath (Join-Path $OutputDirectory 'telemetry.ndjson')
 
     $logs = Invoke-Docker @('--context', $context, 'logs', '--timestamps', $container)
     Set-Content -LiteralPath (Join-Path $logsDirectory "$($Broker.name).log") -Value $logs -NoNewline
 
     $hashes = @()
-    foreach ($path in @($ConfigPath, (Get-ComposePath))) {
+    $effectiveOverride = New-EffectiveComposeOverride $Inventory $Broker
+    $inputFiles = @($ConfigPath, (Get-ComposePath), $effectiveOverride) +
+        @(Get-ChildItem -LiteralPath (Split-Path -Parent (Get-ComposePath)) -Recurse -File | Select-Object -ExpandProperty FullName)
+    foreach ($path in $inputFiles | Sort-Object -Unique) {
         if (Test-Path -LiteralPath $path -PathType Leaf) {
             $hashes += [ordered]@{
                 path = [IO.Path]::GetFullPath($path)
@@ -200,14 +289,17 @@ try {
         }
         'start' {
             $service = [string](Get-RequiredProperty $activeBroker 'serviceName')
-            Invoke-Docker @('--context', $context, 'compose', '-f', (Get-ComposePath), 'up', '-d', $service) | Out-Null
+            Stop-OtherStandContainers $inventory $activeBroker
+            $override = New-EffectiveComposeOverride $inventory $activeBroker
+            Invoke-Docker @('--context', $context, 'compose', '-f', (Get-ComposePath), '-f', $override, 'up', '-d', $service) | Out-Null
             Write-ControllerResult -Status 'started' -Message "Started $($activeBroker.name)."; break
         }
         'health' {
             $container = [string](Get-RequiredProperty $activeBroker 'containerName')
             $health = Invoke-Docker @('--context', $context, 'inspect', '--format', '{{.State.Status}}', $container)
             if ($health -ne 'running') { throw "Broker '$($activeBroker.name)' is not running." }
-            Write-ControllerResult -Status 'healthy' -Message "Broker $($activeBroker.name) is running."; break
+            Test-MqttReadiness ([string](Get-RequiredProperty $activeBroker 'mqttUri'))
+            Write-ControllerResult -Status 'healthy' -Message "Broker $($activeBroker.name) accepted MQTT CONNECT."; break
         }
         'reset' {
             $container = [string](Get-RequiredProperty $activeBroker 'containerName')

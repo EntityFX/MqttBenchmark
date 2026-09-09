@@ -13,11 +13,13 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\EntityFX.MqttBenchmark\EntityFX.MqttBenchmark.csproj" />
+    <ProjectReference Include="..\EntityFX.MqttBenchmark.Bomber\EntityFX.MqttBenchmark.Bomber.csproj" />
   </ItemGroup>
   <ItemGroup>
     <Using Include="Microsoft.VisualStudio.TestTools.UnitTesting" />
   </ItemGroup>
   <ItemGroup>
     <None Include="..\..\scripts\BrokerStand.ps1" Link="BrokerStand.ps1" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\docker\brokers\**\*" Link="docker\brokers\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

@@ -27,4 +27,25 @@
 
 - Controller tests invoke the real PowerShell controller with a disposable Docker command shim, so they do not require a Docker CLI or a live container.
 - The host has no Docker CLI, so Compose parsing, image pulls, startup, health probes, and real container telemetry were not run.
-- Public Docker Hub lookup did not resolve the requested Mosquitto 2.1.2 or ActiveMQ Classic 6.3.2 tags at implementation time. Their manifest digests in the stand are syntactically pinned placeholders and must be replaced with verified registry digests before a real deployment; no real deployment is claimed.
+- Initial registry lookup did not resolve the requested tags. This is superseded by the verified Mosquitto/EMQX digests and the reproducible ActiveMQ build documented in fix round 1; no fabricated digest remains.
+
+## Fix round 1
+
+- Reworked Aedes startup for the Aedes 1.x named `createBroker` API, awaited listener readiness, and emitted a readiness event.  The Node 20 base remains digest-pinned.
+- Replaced synthetic image digests with the verified Mosquitto 2.1.2-alpine and EMQX 6.3.0 multi-arch digests.  ActiveMQ Classic 6.3.2 is now a reproducible custom image on the verified Temurin 21 JRE Alpine base; its official tarball SHA-512 is verified during build.  Build-derived Aedes/ActiveMQ identities remain explicitly unresolved until a target build records their image IDs; they are never represented as fabricated digests.
+- Adopted `singleHostSequential`/`distributedHosts`, the 4 GiB (`4294967296`) inventory baseline, direct host networking, generated effective Compose overrides, and single-host reconciliation of labeled inactive containers.
+- Controller health now requires a bounded MQTT 3.1.1 CONNECT/CONNACK round trip.  Capture appends one-second NDJSON samples with Docker stats, cgroup CPU/throttle/RSS, network, disk I/O, connections, image identity, logs, and hashes of all effective broker inputs.
+- Replaced the generic Docker shim with command-specific responses and assertions covering effective host-network configuration, lifecycle cleanup, capture content, and image/version artifacts.
+- Added `InfraConfigEnvironmentResolver`: `${NAME}` references are expanded only from the process environment, an unset name fails without echoing a value, and NBomber consumes the resolved runtime file.
+
+### Fix-round RED/GREEN evidence
+
+- RED: health reported success for a running container with an unreachable endpoint; GREEN: health fails unless a configured endpoint completes MQTT CONNECT/CONNACK.
+- RED: generated effective Compose output contained published ports; GREEN: focused controller tests assert `network_mode: host`, listener environment, and no `ports:` stanza.
+- RED: resolver test did not compile before the resolver existed; GREEN: `InfraConfigResolver_ExpandsEnvironmentReferenceOrFailsWithoutEchoingValue` passes.
+
+### Fix-round verification and remaining concern
+
+- Focused controller/resolver suite: 9 passed, 0 failed.
+- The local host provides Node 18 only, so `npm ci --dry-run --ignore-scripts` validates lockfile resolution with expected Node>=20 engine warnings; target-image verification requires the Node 20 Docker build.
+- Docker and outbound 443 are unavailable locally.  No remote shell or credential access was attempted.  The remote controller run must verify image pulls/builds, host-network listener bindings, and broker readiness through the arranged tunnel.
