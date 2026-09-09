@@ -42,6 +42,12 @@ if ($joined -eq "stop $($broker.containerName)" -or $joined -eq "rm -f $($broker
 if ($joined -eq "logs --timestamps $($broker.containerName)") { '2026-09-09T00:00:00Z WARN fixture'; exit 0 }
 if ($a[0] -eq 'exec' -and $a[1] -eq $broker.containerName) {
     $cmd = @($a | Select-Object -Skip 2)
+    if (($cmd -join ' ') -eq 'date -u +%s') {
+        if (Test-Path (Join-Path $PSScriptRoot 'clock-delay')) { Start-Sleep -Milliseconds ([int](Get-Content (Join-Path $PSScriptRoot 'clock-delay'))) }
+        $offset = if (Test-Path (Join-Path $PSScriptRoot 'clock-offset')) { [int](Get-Content (Join-Path $PSScriptRoot 'clock-offset')) } else { 0 }
+        [DateTimeOffset]::UtcNow.AddSeconds($offset).ToUnixTimeSeconds()
+        exit 0
+    }
     if ($cmd[0] -eq 'sha256sum') {
         $state = Get-Content $statePath -Raw | ConvertFrom-Json -AsHashtable
         foreach ($path in $cmd[1..($cmd.Count - 1)]) {
@@ -60,8 +66,10 @@ if ($a[0] -eq 'exec' -and $a[1] -eq $broker.containerName) {
     if (($cmd -join ' ') -eq '/usr/sbin/mosquitto -h' -and $broker.name -eq 'Mosquitto') { 'mosquitto version 2.1.2'; exit 0 }
     if (($cmd -join ' ') -eq '/opt/emqx/bin/emqx ctl status' -and $broker.name -eq 'EMQX') { 'Node emqx@127.0.0.1 is started. EMQX version: 6.3.0'; exit 0 }
     if ($cmd.Count -eq 3 -and $cmd[0] -eq 'sh' -and $cmd[1] -eq '-c' -and $cmd[2].StartsWith('# MQTTBENCHMARK_TELEMETRY_V1')) {
+        if (Test-Path (Join-Path $PSScriptRoot 'telemetry-fail')) { throw 'Sampler failed before first sample.' }
         if ($cmd[2] -notmatch 'samples=(\d+)') { throw 'Sampler omitted count.' }
         for ($i = 0; $i -lt [int]$Matches[1]; $i++) {
+            if (Test-Path (Join-Path $PSScriptRoot 'telemetry-delay')) { Start-Sleep -Milliseconds ([int](Get-Content (Join-Path $PSScriptRoot 'telemetry-delay'))) }
             @{ timestamp = "2026-09-09T00:00:0${i}Z"; monotonicSeconds = 100.0 + $i; processRssBytes = 1048576; cgroupMemoryCurrentBytes = 2097152; cgroupCpuAndThrottleBase64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("usage_usec 123`nnr_throttled 1")); networkBase64 = ''; diskIoBase64 = ''; connectionsBase64 = ''; processIds = '1' } | ConvertTo-Json -Compress
         }
         exit 0

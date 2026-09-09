@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)][ValidateSet('validate', 'pull', 'start', 'health', 'reset', 'capture', 'stop')][string]$Action,
+    [Parameter(Mandatory)][ValidateSet('validate', 'pull', 'start', 'health', 'clock', 'reset', 'capture', 'stop')][string]$Action,
     [Parameter(Mandatory)][string]$ConfigPath,
     [string]$OutputDirectory = 'artifacts/broker-stand',
     [ValidateRange(1, 86400)][int]$CaptureSeconds = 1,
@@ -64,8 +64,10 @@ function Test-Inventory($Inventory) {
     if ($Inventory.Contains('campaign') -and $Inventory.campaign -and ($Inventory.campaign.deploymentMode -ne $Inventory.deploymentMode -or $Inventory.campaign.cpuMode -ne $Inventory.cpuMode)) { throw 'Campaign deployment and CPU modes must match the broker stand.' }
 }
 
-function Invoke-Docker([string[]]$Arguments) {
-    $result = & $DockerExecutable @Arguments 2>&1
+function Invoke-Docker([string[]]$Arguments, [scriptblock]$OnLine = $null) {
+    $result = & $DockerExecutable @Arguments 2>&1 | ForEach-Object {
+        if ($OnLine) { & $OnLine ([string]$_) } else { $_ }
+    }
     $code = if (Test-Path Variable:LASTEXITCODE) { $LASTEXITCODE } else { 0 }
     if ($code -ne 0) { throw "Docker command failed ($code): $($Arguments[2]) $($Arguments[3]); $($result | Out-String)" }
     return ($result | Out-String).Trim()
@@ -218,6 +220,28 @@ function Test-MqttReadiness([string]$MqttUri) {
     } finally { $client.Dispose() }
 }
 
+function Write-ClockAlignment($Broker) {
+    $run = Get-Run $Broker
+    $probes = @(for ($i = 0; $i -lt 3; $i++) {
+        $before = [DateTimeOffset]::UtcNow
+        $timer = [Diagnostics.Stopwatch]::StartNew()
+        $raw = Invoke-Docker @('--context', $context, 'exec', $Broker.containerName, 'date', '-u', '+%s')
+        $timer.Stop()
+        $after = [DateTimeOffset]::UtcNow
+        $epoch = 0L
+        if (-not [long]::TryParse($raw, [ref]$epoch)) { throw 'Remote clock returned an invalid Unix timestamp.' }
+        $remote = [DateTimeOffset]::FromUnixTimeSeconds($epoch)
+        # date truncates to whole seconds: centre that interval and retain its uncertainty.
+        $offset = ($remote.AddMilliseconds(500) - $before.AddMilliseconds($timer.Elapsed.TotalMilliseconds / 2)).TotalMilliseconds
+        $wallDrift = [Math]::Abs(($after - $before).TotalMilliseconds - $timer.Elapsed.TotalMilliseconds)
+        [ordered]@{ controllerBeforeUtc = $before.ToString('O'); controllerAfterUtc = $after.ToString('O'); remoteUtc = $remote.ToString('O'); roundTripMs = $timer.Elapsed.TotalMilliseconds; offsetMs = $offset; uncertaintyMs = 500 + $timer.Elapsed.TotalMilliseconds / 2 + $wallDrift; controllerClockStepMs = $wallDrift }
+    })
+    $best = $probes | Sort-Object roundTripMs | Select-Object -First 1
+    $ready = ([Math]::Abs($best.offsetMs) + $best.uncertaintyMs -le 2000) -and (@($probes | Where-Object { $_.controllerClockStepMs -gt 100 }).Count -eq 0)
+    Write-JsonFile ([ordered]@{ ready = $ready; thresholdMs = 2000; offsetMs = $best.offsetMs; uncertaintyMs = $best.uncertaintyMs; method = 'docker-exec-date-unix-seconds-midpoint'; clockScope = 'container-realtime-shared-with-host'; context = $context; broker = $Broker.name; containerId = $run.containerId; imageId = $run.imageId; controllerMachine = [Environment]::MachineName; probes = $probes }) (Join-Path $OutputDirectory 'clock-alignment.json')
+    if (-not $ready) { throw 'Controller/broker clock alignment is unready; see clock-alignment.json (2000 ms conservative bound). Synchronize clocks externally before retrying.' }
+}
+
 function Write-Capture($Broker) {
     $run = Get-Run $Broker
     $dockerVersion = Invoke-Docker @('--context', $context, 'version', '--format', '{{json .}}') | ConvertFrom-Json -AsHashtable
@@ -239,10 +263,11 @@ function Write-Capture($Broker) {
     Write-JsonFile ([ordered]@{ docker = $dockerVersion; image = $image; runningImageId = $run.imageId; requestedImage = $run.requestedImage; brokerVersion = $version; runtimeVersion = $runtime }) (Join-Path $OutputDirectory 'versions.json')
     $script = (Get-Content -Raw -LiteralPath (Join-Path $brokersRoot 'telemetry.sh')).Replace("`r`n", "`n").Replace('samples=1', "samples=$CaptureSeconds")
     # One exec owns the entire monotonic schedule. Docker/SSH latency occurs once, outside the sample loop.
-    $raw = Invoke-Docker @('--context', $context, 'exec', $Broker.containerName, 'sh', '-c', $script)
-    $samples = @($raw -split "`r?`n" | Where-Object { $_.Trim() } | ForEach-Object { $_ | ConvertFrom-Json -AsHashtable })
-    if ($samples.Count -lt $CaptureSeconds) { throw 'Telemetry sampler returned fewer samples than requested.' }
-    foreach ($sample in $samples) {
+    $samples = [Collections.Generic.List[object]]::new()
+    Invoke-Docker @('--context', $context, 'exec', $Broker.containerName, 'sh', '-c', $script) {
+        param($line)
+        if (-not $line.Trim()) { return }
+        $sample = $line | ConvertFrom-Json -AsHashtable
         foreach ($field in @('cgroupCpuAndThrottle', 'network', 'diskIo', 'connections')) {
             $sample[$field] = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($sample["${field}Base64"]))
             $sample.Remove("${field}Base64")
@@ -255,7 +280,14 @@ function Write-Capture($Broker) {
         $sample.networkScope = 'host-shared'
         $sample.connectionsScope = 'host-shared'
         ConvertTo-Json -InputObject $sample -Compress | Add-Content -LiteralPath (Join-Path $OutputDirectory 'telemetry.ndjson')
+        $samples.Add($sample)
+        if ($samples.Count -eq 1) {
+            $readyPath = Join-Path $OutputDirectory 'telemetry-ready.json'
+            Write-JsonFile ([ordered]@{ firstSampleTimestamp = $sample.timestamp; firstSampleMonotonicSeconds = $sample.monotonicSeconds; controllerObservedUtc = [DateTimeOffset]::UtcNow.ToString('O'); containerId = $run.containerId }) "$readyPath.tmp"
+            Move-Item -LiteralPath "$readyPath.tmp" -Destination $readyPath
+        }
     }
+    if ($samples.Count -lt $CaptureSeconds) { throw 'Telemetry sampler returned fewer samples than requested.' }
     $logsDirectory = Join-Path $OutputDirectory 'logs'
     New-Item -ItemType Directory -Force -Path $logsDirectory | Out-Null
     Invoke-Docker @('--context', $context, 'logs', '--timestamps', $Broker.containerName) | Set-Content (Join-Path $logsDirectory "$($Broker.name).log")
@@ -307,6 +339,7 @@ try {
             $status = 'started'
         }
         'health' { [void](Get-Run $broker); Test-MqttReadiness $broker.mqttUri; $status = 'healthy' }
+        'clock' { Write-ClockAlignment $broker; $status = 'clock-aligned' }
         'capture' { Write-Capture $broker; $status = 'captured' }
         'stop' { Invoke-Docker @('--context', $context, 'stop', $broker.containerName) | Out-Null; $status = 'stopped' }
         'reset' { Invoke-Docker @('--context', $context, 'rm', '-f', $broker.containerName) | Out-Null; $status = 'reset' }

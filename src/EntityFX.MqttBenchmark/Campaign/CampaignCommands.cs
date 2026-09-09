@@ -95,17 +95,15 @@ public static class CampaignCommands
                 // drain and cooldown. Awaiting it also prevents capture writes after an attempt is sealed.
                 var captureSeconds = (int)Math.Ceiling(config.WarmupSeconds + config.MeasurementSeconds +
                     config.CooldownSeconds + config.DrainTimeoutSeconds + 20);
-                var capture = stand.CaptureAsync(captureSeconds, ct);
-                RunObservation observation;
-                try
+                RunObservation? observation = null;
+                var telemetry = await stand.RunWithTelemetryAsync(captureSeconds, async measurementToken =>
                 {
                     observation = await runner.RunAsync(config, key, stand.Endpoint, campaignIdentity.CampaignId,
-                        key.Key + $".attempt-{number:00}", attemptPath, protocol.RttBaselineMs.Value, ct);
-                }
-                finally { await capture; }
-                var report = PreflightReport.Create(campaignIdentity, new[] { new BrokerPreflight(protocol, await capture) });
+                        key.Key + $".attempt-{number:00}", attemptPath, protocol.RttBaselineMs.Value, measurementToken);
+                }, ct);
+                var report = PreflightReport.Create(campaignIdentity, new[] { new BrokerPreflight(protocol, telemetry) });
                 CampaignJson.WriteNew(Path.Combine(attemptPath, "preflight.json"), report);
-                return observation;
+                return observation!;
             }, maxRuns, cancellationToken);
         }
         Console.WriteLine($"Campaign invocation finished: {directory}. Aggregate enforces full 288/288 coverage.");

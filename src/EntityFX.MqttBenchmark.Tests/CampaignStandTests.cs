@@ -6,6 +6,104 @@ namespace EntityFX.MqttBenchmark.Tests;
 [TestClass]
 public class CampaignStandTests
 {
+    [DataTestMethod]
+    [DataRow(195)] [DataRow(-195)]
+    public async Task StandClock_RejectsMisalignmentAndRetainsOffsetEvidence(int seconds)
+    {
+        await using var broker = await LocalBroker.StartAsync();
+        using var fixture = new CampaignStandFixture(broker.Uri);
+        File.WriteAllText(System.IO.Path.Combine(fixture.Path, "clock-offset"), seconds.ToString());
+        await Assert.ThrowsExceptionAsync<InvalidOperationException>(async () =>
+        {
+            await using var session = await StandSession.StartAsync(fixture.Script, fixture.InventoryPath,
+                new CampaignDefinition(), "Mosquitto", fixture.Output, fixture.Docker);
+        });
+        var clock = JsonNode.Parse(File.ReadAllText(System.IO.Path.Combine(fixture.Output, "clock-alignment.json")))!;
+        Assert.IsFalse(clock["ready"]!.GetValue<bool>());
+        Assert.AreEqual(seconds * 1000d, clock["offsetMs"]!.GetValue<double>(), 2000);
+        Assert.AreEqual(2000d, clock["thresholdMs"]!.GetValue<double>());
+        Assert.AreEqual(3, clock["probes"]!.AsArray().Count);
+        var state = JsonNode.Parse(File.ReadAllText(System.IO.Path.Combine(fixture.Path, "container-state.json")))!;
+        Assert.AreEqual("exited", state["State"]!["Status"]!.GetValue<string>(), "An unready stand must be stopped.");
+    }
+
+    [TestMethod]
+    public async Task StandClock_RejectsUncertainSlowProbeEvenWhenPointOffsetIsWithinThreshold()
+    {
+        await using var broker = await LocalBroker.StartAsync();
+        using var fixture = new CampaignStandFixture(broker.Uri);
+        File.WriteAllText(System.IO.Path.Combine(fixture.Path, "clock-delay"), "2500");
+        await Assert.ThrowsExceptionAsync<InvalidOperationException>(async () =>
+        {
+            await using var session = await StandSession.StartAsync(fixture.Script, fixture.InventoryPath,
+                new CampaignDefinition(), "Mosquitto", fixture.Output, fixture.Docker);
+        });
+        var clock = JsonNode.Parse(File.ReadAllText(System.IO.Path.Combine(fixture.Output, "clock-alignment.json")))!;
+        Assert.IsFalse(clock["ready"]!.GetValue<bool>());
+        Assert.IsTrue(Math.Abs(clock["offsetMs"]!.GetValue<double>()) < 2000);
+        Assert.IsTrue(Math.Abs(clock["offsetMs"]!.GetValue<double>()) + clock["uncertaintyMs"]!.GetValue<double>() > 2000);
+    }
+
+    [TestMethod]
+    public async Task TelemetryBarrier_InvokesMeasurementOnlyAfterFirstSampleWhileCaptureIsStillRunning()
+    {
+        await using var broker = await LocalBroker.StartAsync();
+        using var fixture = new CampaignStandFixture(broker.Uri);
+        File.WriteAllText(System.IO.Path.Combine(fixture.Path, "telemetry-delay"), "1500");
+        await using var session = await StandSession.StartAsync(fixture.Script, fixture.InventoryPath,
+            new CampaignDefinition(), "Mosquitto", fixture.Output, fixture.Docker);
+        var measured = false;
+        Func<CancellationToken, Task> measurement = _ =>
+        {
+            Assert.IsTrue(File.Exists(System.IO.Path.Combine(fixture.Output, "telemetry-ready.json")));
+            Assert.IsFalse(File.Exists(System.IO.Path.Combine(fixture.Output, "telemetry-manifest.json")), "Capture must still be active.");
+            var first = JsonNode.Parse(File.ReadLines(System.IO.Path.Combine(fixture.Output, "telemetry.ndjson")).First())!;
+            Assert.AreEqual("container-cgroup", first["cpuScope"]!.GetValue<string>());
+            measured = true;
+            return Task.CompletedTask;
+        };
+        await session.RunWithTelemetryAsync(3, measurement);
+        Assert.IsTrue(measured);
+        Assert.IsTrue(File.Exists(System.IO.Path.Combine(fixture.Output, "telemetry-manifest.json")));
+        var clock = JsonNode.Parse(File.ReadAllText(System.IO.Path.Combine(fixture.Output, "clock-alignment.json")))!;
+        Assert.IsTrue(clock["ready"]!.GetValue<bool>());
+    }
+
+    [TestMethod]
+    public async Task TelemetryBarrier_DoesNotMeasureWhenSamplerFailsBeforeFirstSample()
+    {
+        await using var broker = await LocalBroker.StartAsync();
+        using var fixture = new CampaignStandFixture(broker.Uri);
+        File.WriteAllText(System.IO.Path.Combine(fixture.Path, "telemetry-fail"), "true");
+        await using var session = await StandSession.StartAsync(fixture.Script, fixture.InventoryPath,
+            new CampaignDefinition(), "Mosquitto", fixture.Output, fixture.Docker);
+        var measured = false;
+        Func<CancellationToken, Task> measurement = _ => { measured = true; return Task.CompletedTask; };
+        await Assert.ThrowsExceptionAsync<InvalidOperationException>(async () =>
+            await session.RunWithTelemetryAsync(3, measurement));
+        Assert.IsFalse(measured);
+    }
+
+    [TestMethod]
+    public async Task TelemetryBarrier_CancellationBeforeReadinessNeverInvokesMeasurement()
+    {
+        await using var broker = await LocalBroker.StartAsync();
+        using var fixture = new CampaignStandFixture(broker.Uri);
+        File.WriteAllText(System.IO.Path.Combine(fixture.Path, "telemetry-delay"), "5000");
+        await using var session = await StandSession.StartAsync(fixture.Script, fixture.InventoryPath,
+            new CampaignDefinition(), "Mosquitto", fixture.Output, fixture.Docker);
+        using var cancel = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
+        var measured = false;
+        try
+        {
+            await session.RunWithTelemetryAsync(3, _ => { measured = true; return Task.CompletedTask; }, cancel.Token);
+            Assert.Fail("Cancelled capture must not admit measurement.");
+        }
+        catch (OperationCanceledException) { }
+        Assert.IsFalse(measured);
+        Assert.IsFalse(File.Exists(System.IO.Path.Combine(fixture.Output, "measurement-started.json")));
+    }
+
     [TestMethod]
     public async Task StandAdapter_UsesApprovedControllerAndRecordsRealProtocolEnvironmentAndTelemetry()
     {

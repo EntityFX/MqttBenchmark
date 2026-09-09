@@ -72,6 +72,7 @@ public sealed class StandSession : IAsyncDisposable
             session.started = true;
             await session.InvokeAsync("start", selectedPath, output, 1, cancellationToken);
             await session.InvokeAsync("health", selectedPath, output, 1, cancellationToken);
+            await session.InvokeAsync("clock", selectedPath, output, 1, cancellationToken);
             return session;
         }
         catch
@@ -94,6 +95,34 @@ public sealed class StandSession : IAsyncDisposable
         var id = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(context)));
         leases.Add(context, new FileStream(Path.Combine(Path.GetTempPath(), "mqttbenchmark-stand-" + id + ".lock"),
             FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None));
+    }
+
+    public async Task<TelemetryManifest> RunWithTelemetryAsync(int seconds, Func<CancellationToken, Task> measurement,
+        CancellationToken cancellationToken = default)
+    {
+        using var captureCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var capture = CaptureAsync(seconds, captureCancellation.Token);
+        try
+        {
+            var startup = Stopwatch.StartNew();
+            while (!File.Exists(Path.Combine(output, "telemetry-ready.json")))
+            {
+                if (capture.IsCompleted) { await capture; throw new InvalidDataException("Telemetry ended before measurement readiness."); }
+                if (startup.Elapsed > TimeSpan.FromSeconds(60)) throw new TimeoutException("Telemetry did not become ready within 60 seconds.");
+                await Task.Delay(25, cancellationToken);
+            }
+            if (capture.IsCompleted) { await capture; throw new InvalidDataException("Telemetry ended before measurement started."); }
+            CampaignJson.WriteNew(Path.Combine(output, "measurement-started.json"), new { startedAtUtc = DateTimeOffset.UtcNow });
+            await measurement(cancellationToken);
+            if (capture.IsCompleted) { await capture; throw new InvalidDataException("Telemetry ended before measurement completed."); }
+            return await capture;
+        }
+        catch
+        {
+            captureCancellation.Cancel();
+            try { await capture; } catch { /* Preserve the readiness/measurement failure. */ }
+            throw;
+        }
     }
 
     public async Task<TelemetryManifest> CaptureAsync(int seconds, CancellationToken cancellationToken = default)
