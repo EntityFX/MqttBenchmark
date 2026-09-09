@@ -10,6 +10,21 @@ $a = @($DockerArguments | Select-Object -Skip 2)
 $imageId = 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
 $joined = $a -join ' '
 $statePath = Join-Path $PSScriptRoot 'container-state.json'
+function Read-FixtureClock([bool]$WholeSeconds) {
+    $counterPath = Join-Path $PSScriptRoot 'clock-probe-count'
+    $count = if (Test-Path $counterPath) { [int](Get-Content $counterPath) } else { 0 }
+    ($count + 1) | Set-Content $counterPath
+    $delay = if (Test-Path (Join-Path $PSScriptRoot 'clock-delay')) { [int](Get-Content (Join-Path $PSScriptRoot 'clock-delay')) } else { 0 }
+    if ($count -eq 0 -and (Test-Path (Join-Path $PSScriptRoot 'clock-first-delay'))) { $delay = [int](Get-Content (Join-Path $PSScriptRoot 'clock-first-delay')) }
+    if ($delay -gt 0) { Start-Sleep -Milliseconds $delay }
+    if ($WholeSeconds -and (Test-Path (Join-Path $PSScriptRoot 'clock-whole-second-boundary'))) {
+        Start-Sleep -Milliseconds (1005 - [DateTimeOffset]::UtcNow.Millisecond)
+    }
+    $offset = if (Test-Path (Join-Path $PSScriptRoot 'clock-offset')) { [int](Get-Content (Join-Path $PSScriptRoot 'clock-offset')) } else { 0 }
+    $now = [DateTimeOffset]::UtcNow.AddSeconds($offset)
+    if ($WholeSeconds) { $now.ToUnixTimeSeconds() } else { $now.ToString('yyyy-MM-ddTHH:mm:ss.fffffff', [Globalization.CultureInfo]::InvariantCulture) + '12Z' }
+}
+if ($joined -eq 'info --format {{.SystemTime}}') { Read-FixtureClock $false; exit 0 }
 if ($a[0] -eq 'compose' -and $a.Count -eq 5 -and $a[1] -eq '-f' -and $a[3] -eq 'build' -and $a[4] -eq $broker.serviceName) {
     $compose = Get-Content $a[2] -Raw | ConvertFrom-Json
     if ($compose.services.($broker.serviceName).image -ne $broker.image) { throw 'Built tag does not match inventory.' }
@@ -56,9 +71,7 @@ if ($a[0] -eq 'exec' -and $a[1] -eq $broker.containerName) {
         exit 0
     }
     if (($cmd -join ' ') -eq 'date -u +%s') {
-        if (Test-Path (Join-Path $PSScriptRoot 'clock-delay')) { Start-Sleep -Milliseconds ([int](Get-Content (Join-Path $PSScriptRoot 'clock-delay'))) }
-        $offset = if (Test-Path (Join-Path $PSScriptRoot 'clock-offset')) { [int](Get-Content (Join-Path $PSScriptRoot 'clock-offset')) } else { 0 }
-        [DateTimeOffset]::UtcNow.AddSeconds($offset).ToUnixTimeSeconds()
+        Read-FixtureClock $true
         exit 0
     }
     if ($cmd[0] -eq 'sha256sum') {

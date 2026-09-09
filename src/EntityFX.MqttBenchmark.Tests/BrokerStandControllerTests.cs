@@ -213,6 +213,45 @@ public class BrokerStandControllerTests
     }
 
     [TestMethod]
+    public void Health_WaitsForSuccessfulConnackAfterTransientStartupFailures()
+    {
+        using var stand = new StandFixture("Mosquitto");
+        stand.FailFirstConnections = 2;
+        stand.Ok("start");
+        stand.Ok("health");
+        Assert.AreEqual(3, stand.Connections);
+    }
+
+    [TestMethod]
+    public void Health_NeverReadyTimesOutWithLastProtocolError()
+    {
+        using var stand = new StandFixture("Mosquitto");
+        stand.ConnackCode = 5;
+        stand.Ok("start");
+        var timer = Stopwatch.StartNew();
+        stand.Fails("health", "timed out");
+        Assert.IsTrue(stand.Connections > 1, "Readiness must retry actual protocol probes.");
+        Assert.IsTrue(timer.Elapsed < TimeSpan.FromSeconds(10));
+        var health = stand.Json("health-readiness.json");
+        Assert.IsFalse(health["ready"]!.GetValue<bool>());
+        StringAssert.Contains(health["lastError"]!.GetValue<string>(), "CONNACK");
+    }
+
+    [TestMethod]
+    public void Health_SlowConnackCannotExtendReadinessDeadline()
+    {
+        using var stand = new StandFixture("Mosquitto");
+        stand.ConnackDelayMilliseconds = 3000;
+        stand.Ok("start");
+        var timer = Stopwatch.StartNew();
+        stand.Fails("health", "timed out");
+        Assert.IsTrue(timer.Elapsed < TimeSpan.FromSeconds(5), "A blocked stream read must obey the one-second test readiness deadline.");
+        var health = stand.Json("health-readiness.json");
+        Assert.IsFalse(health["ready"]!.GetValue<bool>());
+        Assert.IsTrue(health["elapsedMs"]!.GetValue<double>() < 2000);
+    }
+
+    [TestMethod]
     public void Health_RequiresSuccessfulMqttConnack()
     {
         using var stand = new StandFixture("Mosquitto");
@@ -232,6 +271,11 @@ public class BrokerStandControllerTests
         public JsonObject Inventory { get; }
         public JsonObject Broker => Inventory["brokers"]![0]!.AsObject();
         public byte ConnackCode { get; set; }
+        private int connections;
+        public int Connections => Volatile.Read(ref connections);
+        public int FailFirstConnections { get; set; }
+        public int ConnackDelayMilliseconds { get; set; }
+        private volatile bool disposing;
         private readonly TcpListener listener = new(IPAddress.Loopback, 0);
         private readonly Task acceptLoop;
 
@@ -248,13 +292,16 @@ public class BrokerStandControllerTests
                     while (true)
                     {
                         using var client = await listener.AcceptTcpClientAsync();
+                        var number = Interlocked.Increment(ref connections);
                         var buffer = new byte[64];
                         await client.GetStream().ReadAsync(buffer);
-                        await client.GetStream().WriteAsync(new byte[] { 0x20, 2, 0, ConnackCode });
+                        if (ConnackDelayMilliseconds > 0) await Task.Delay(ConnackDelayMilliseconds);
+                        await client.GetStream().WriteAsync(new byte[] { 0x20, 2, 0, number <= FailFirstConnections ? (byte)5 : ConnackCode });
                     }
                 }
                 catch (SocketException) { }
                 catch (ObjectDisposedException) { }
+                catch (InvalidOperationException) when (disposing) { }
             });
             var service = name.ToLowerInvariant();
             Inventory = new JsonObject
@@ -297,6 +344,7 @@ public class BrokerStandControllerTests
             foreach (var arg in new[] { "-NoProfile", "-File", Path.Combine(Directory, "BrokerStand.ps1"), "-Action", action,
                 "-ConfigPath", Path.Combine(Directory, "stand.json"), "-OutputDirectory", Directory,
                 "-DockerExecutable", Path.Combine(Directory, "docker.ps1"), "-CaptureSeconds", seconds.ToString() }) info.ArgumentList.Add(arg);
+            info.ArgumentList.Add("-HealthTimeoutSeconds"); info.ArgumentList.Add("1");
             using var process = Process.Start(info)!;
             var output = process.StandardOutput.ReadToEndAsync();
             var error = process.StandardError.ReadToEndAsync();
@@ -305,6 +353,7 @@ public class BrokerStandControllerTests
         }
         public void Dispose()
         {
+            disposing = true;
             listener.Stop();
             acceptLoop.GetAwaiter().GetResult();
             System.IO.Directory.Delete(Directory, true);

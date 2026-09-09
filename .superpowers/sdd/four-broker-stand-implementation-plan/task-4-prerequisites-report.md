@@ -68,3 +68,24 @@ dotnet test src/EntityFX.MqttBenchmark.Tests -c Release --no-restore --filter Fu
 dotnet test src/EntityFX.MqttBenchmark.Tests -c Release --no-restore --filter 'FullyQualifiedName~TelemetryBarrier_|FullyQualifiedName~MatrixCommand_Propagates' --nologo --verbosity quiet --logger 'console;verbosity=normal'
 dotnet test src/EntityFX.MqttBenchmark.sln -c Release --no-restore --nologo --verbosity quiet --logger 'console;verbosity=normal' --logger 'trx;LogFileName=task4-sampler-lifecycle.trx' --results-directory TestResults/task4-sampler-lifecycle
 ```
+
+## Live preflight fix — daemon clock precision and broker startup readiness
+
+The parent ran `artifacts/task4-preflight-four-brokers-001` at benchmark commit `03e5120`. Its overall result was failure: Mosquitto passed; Aedes failed clock alignment; EMQX and ActiveMQ failed immediate MQTT health after successful container start. These immutable artifacts were not changed. Their SHA-256 registry still verifies **90/90 files, zero mismatches**; the registry file hash is `277c3e3720919abf39b51c75b2c391a71c208470c35f5120b7ca6fe9682b893a`.
+
+Aedes retained offset `952.9094 ms` plus uncertainty `1073.02605 ms`, producing a `2025.93545 ms` rejection despite the parent independently finding the host aligned. Whole-second container timestamps and roughly 1.14-second Docker/SSH RTT inflated this bound; the Alpine date utility does not provide usable `%N` precision. The report also exposed a selection defect: the selected 1143.0529 ms RTT was not the minimum (1141.9098 ms existed), because sorting ordered dictionaries by a named property did not evaluate their numeric values as intended.
+
+Clock probes now read `docker --context <selected-context> info --format '{{.SystemTime}}'`, the Docker daemon host's high-resolution RFC3339 time, independently of image utilities. Three probes, monotonic midpoint/RTT accounting, the 100 ms controller wall-step guard and the conservative `abs(offset) + uncertainty <= 2000 ms` gate remain. Original daemon timestamps are retained alongside parsed UTC; 1 ms conservatively bounds timestamp parsing. Selection explicitly sorts the numeric RTT expression. Running container/image/effective-configuration provenance is verified before querying the same context. Tests retain ±195-second rejection and uncertain slow-probe rejection.
+
+Health now polls actual MQTT CONNECT/CONNACK with a default 60-second deadline and at most 250 ms between failed probes. Connection and stream I/O use the remaining budget, capped at five seconds per probe. It exits immediately on readiness and retains attempts, elapsed time and the last underlying error in `health-readiness.json`; timeout includes that error. `-HealthTimeoutSeconds` permits 1–300 seconds for manual controller calls; the tests use one second. This accommodates delayed EMQX/ActiveMQ listener startup without blindly waiting a fixed startup duration.
+
+Strict TDD: **4 RED failures** reproduced high-RTT whole-second false rejection, wrong first-probe selection, transient readiness incorrectly failing, and never-ready probes failing immediately instead of timing out. Focused Release was **8/8 passed**, including previous rejection guards. An additional slow-CONNACK test checks the I/O deadline. The first full run was **78 passed / 1 failed**: the new slow-response test passed its deadline assertions, then its test TCP server raced shutdown and attempted `AcceptTcpClientAsync` after `Stop`. Fixture cleanup now explicitly recognizes that disposal state. Final full Release: **79/79 passed, 0 skipped**, 4.9898 minutes. Local evidence: `C:\projects\EntityFx.Iot\MqttBenchmark\TestResults\task4-clock-health-final\task4-clock-health-final.trx`. `git diff --check` passed with expected LF/CRLF notices. No full live preflight was rerun by this implementer; the parent will retry using new immutable output after review. No clock adjustment or mqtty change was made.
+
+Commands from `MqttBenchmark`:
+
+```powershell
+dotnet test src/EntityFX.MqttBenchmark.Tests -c Release --no-restore --filter 'FullyQualifiedName~StandClock_AlignedDaemon|FullyQualifiedName~StandClock_SelectsSmallest|FullyQualifiedName~Health_Waits|FullyQualifiedName~Health_NeverReady' --nologo --verbosity quiet --logger 'console;verbosity=normal'
+dotnet test src/EntityFX.MqttBenchmark.Tests -c Release --no-restore --filter 'FullyQualifiedName~StandClock_|FullyQualifiedName~Health_' --nologo --verbosity quiet --logger 'console;verbosity=normal'
+dotnet test src/EntityFX.MqttBenchmark.sln -c Release --no-restore --nologo --verbosity quiet --logger 'console;verbosity=normal' --logger 'trx;LogFileName=task4-clock-health.trx' --results-directory TestResults/task4-clock-health
+dotnet test src/EntityFX.MqttBenchmark.sln -c Release --no-restore --nologo --verbosity quiet --logger 'console;verbosity=normal' --logger 'trx;LogFileName=task4-clock-health-final.trx' --results-directory TestResults/task4-clock-health-final
+```

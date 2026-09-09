@@ -4,6 +4,7 @@ param(
     [Parameter(Mandatory)][string]$ConfigPath,
     [string]$OutputDirectory = 'artifacts/broker-stand',
     [ValidateRange(1, 86400)][int]$CaptureSeconds = 1,
+    [ValidateRange(1, 300)][int]$HealthTimeoutSeconds = 60,
     [string]$DockerExecutable = 'docker'
 )
 
@@ -197,27 +198,52 @@ function Get-Run($Broker) {
     return $run
 }
 
-function Test-MqttReadiness([string]$MqttUri) {
+function Test-MqttReadiness([string]$MqttUri, [int]$TimeoutMs) {
     $uri = [Uri]$MqttUri
     $client = [Net.Sockets.TcpClient]::new()
+    $timer = [Diagnostics.Stopwatch]::StartNew()
     try {
         try {
-            if (-not $client.ConnectAsync($uri.Host, $uri.Port).Wait(5000)) { throw 'Connect timeout.' }
-        } catch { throw "MQTT readiness failed connecting to '$MqttUri'." }
+            if (-not $client.ConnectAsync($uri.Host, $uri.Port).Wait($TimeoutMs)) { throw 'Connect timeout.' }
+        } catch { throw "MQTT readiness failed connecting to '$($uri.Host):$($uri.Port)': $($_.Exception.GetBaseException().Message)" }
         $stream = $client.GetStream()
-        $stream.ReadTimeout = 5000
+        $stream.WriteTimeout = [Math]::Max(1, $TimeoutMs - [int]$timer.ElapsedMilliseconds)
         $packet = [byte[]](0x10,0x12,0x00,0x04,0x4d,0x51,0x54,0x54,0x04,0x02,0x00,0x05,0x00,0x06,0x68,0x65,0x61,0x6c,0x74,0x68)
         $stream.Write($packet, 0, $packet.Length)
         $response = [byte[]]::new(4)
         $offset = 0
         while ($offset -lt 4) {
+            $remaining = $TimeoutMs - [int]$timer.ElapsedMilliseconds
+            if ($remaining -le 0) { throw 'MQTT readiness CONNACK timeout.' }
+            $stream.ReadTimeout = $remaining
             $count = $stream.Read($response, $offset, 4 - $offset)
             if ($count -eq 0) { throw 'MQTT readiness received incomplete CONNACK.' }
             $offset += $count
         }
         if (($response -join ',') -ne '32,2,0,0') { throw 'MQTT readiness received non-success CONNACK.' }
+        $remaining = $TimeoutMs - [int]$timer.ElapsedMilliseconds
+        if ($remaining -le 0) { throw 'MQTT readiness CONNACK timeout.' }
+        $stream.WriteTimeout = $remaining
         $stream.Write([byte[]](0xe0,0), 0, 2)
     } finally { $client.Dispose() }
+}
+
+function Wait-MqttReadiness($Broker) {
+    $timer = [Diagnostics.Stopwatch]::StartNew()
+    $attempts = 0; $lastError = $null; $ready = $false
+    while ($timer.Elapsed.TotalSeconds -lt $HealthTimeoutSeconds) {
+        $attempts++
+        $remaining = [int][Math]::Ceiling($HealthTimeoutSeconds * 1000 - $timer.Elapsed.TotalMilliseconds)
+        try {
+            Test-MqttReadiness $Broker.mqttUri ([Math]::Min(5000, [Math]::Max(1, $remaining)))
+            $ready = $true
+            break
+        } catch { $lastError = $_.Exception.GetBaseException().Message }
+        $remaining = [int][Math]::Floor($HealthTimeoutSeconds * 1000 - $timer.Elapsed.TotalMilliseconds)
+        if ($remaining -gt 0) { Start-Sleep -Milliseconds ([Math]::Min(250, $remaining)) }
+    }
+    Write-JsonFile ([ordered]@{ ready = $ready; attempts = $attempts; timeoutSeconds = $HealthTimeoutSeconds; elapsedMs = $timer.Elapsed.TotalMilliseconds; lastError = $lastError }) (Join-Path $OutputDirectory 'health-readiness.json')
+    if (-not $ready) { throw "MQTT readiness timed out after $HealthTimeoutSeconds seconds. Last error: $lastError" }
 }
 
 function Write-ClockAlignment($Broker) {
@@ -225,21 +251,20 @@ function Write-ClockAlignment($Broker) {
     $probes = @(for ($i = 0; $i -lt 3; $i++) {
         $before = [DateTimeOffset]::UtcNow
         $timer = [Diagnostics.Stopwatch]::StartNew()
-        $raw = Invoke-Docker @('--context', $context, 'exec', $Broker.containerName, 'date', '-u', '+%s')
+        $raw = Invoke-Docker @('--context', $context, 'info', '--format', '{{.SystemTime}}')
         $timer.Stop()
         $after = [DateTimeOffset]::UtcNow
-        $epoch = 0L
-        if (-not [long]::TryParse($raw, [ref]$epoch)) { throw 'Remote clock returned an invalid Unix timestamp.' }
-        $remote = [DateTimeOffset]::FromUnixTimeSeconds($epoch)
-        # date truncates to whole seconds: centre that interval and retain its uncertainty.
-        $offset = ($remote.AddMilliseconds(500) - $before.AddMilliseconds($timer.Elapsed.TotalMilliseconds / 2)).TotalMilliseconds
+        $remote = [DateTimeOffset]::MinValue
+        if ($raw -notmatch '^\d{4}-\d{2}-\d{2}T.*(?:Z|[+-]\d{2}:\d{2})$' -or -not [DateTimeOffset]::TryParse($raw, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind, [ref]$remote)) { throw 'Docker daemon SystemTime returned an invalid timestamp.' }
+        # The daemon provides RFC3339Nano on every broker image; 1 ms conservatively covers parsing resolution.
+        $offset = ($remote - $before.AddMilliseconds($timer.Elapsed.TotalMilliseconds / 2)).TotalMilliseconds
         $wallDrift = [Math]::Abs(($after - $before).TotalMilliseconds - $timer.Elapsed.TotalMilliseconds)
-        [ordered]@{ controllerBeforeUtc = $before.ToString('O'); controllerAfterUtc = $after.ToString('O'); remoteUtc = $remote.ToString('O'); roundTripMs = $timer.Elapsed.TotalMilliseconds; offsetMs = $offset; uncertaintyMs = 500 + $timer.Elapsed.TotalMilliseconds / 2 + $wallDrift; controllerClockStepMs = $wallDrift }
+        [ordered]@{ controllerBeforeUtc = $before.ToString('O'); controllerAfterUtc = $after.ToString('O'); remoteUtc = $remote.ToString('O'); remoteSystemTime = $raw; roundTripMs = $timer.Elapsed.TotalMilliseconds; offsetMs = $offset; uncertaintyMs = 1 + $timer.Elapsed.TotalMilliseconds / 2 + $wallDrift; controllerClockStepMs = $wallDrift }
     })
-    $best = $probes | Sort-Object roundTripMs | Select-Object -First 1
+    $best = $probes | Sort-Object { $_.roundTripMs } | Select-Object -First 1
     $ready = ([Math]::Abs($best.offsetMs) + $best.uncertaintyMs -le 2000) -and (@($probes | Where-Object { $_.controllerClockStepMs -gt 100 }).Count -eq 0)
-    Write-JsonFile ([ordered]@{ ready = $ready; thresholdMs = 2000; offsetMs = $best.offsetMs; uncertaintyMs = $best.uncertaintyMs; method = 'docker-exec-date-unix-seconds-midpoint'; clockScope = 'container-realtime-shared-with-host'; context = $context; broker = $Broker.name; containerId = $run.containerId; imageId = $run.imageId; controllerMachine = [Environment]::MachineName; probes = $probes }) (Join-Path $OutputDirectory 'clock-alignment.json')
-    if (-not $ready) { throw 'Controller/broker clock alignment is unready; see clock-alignment.json (2000 ms conservative bound). Synchronize clocks externally before retrying.' }
+    Write-JsonFile ([ordered]@{ ready = $ready; thresholdMs = 2000; offsetMs = $best.offsetMs; uncertaintyMs = $best.uncertaintyMs; method = 'docker-daemon-system-time-midpoint'; clockScope = 'docker-daemon-host-realtime'; timestampResolutionBoundMs = 1; context = $context; broker = $Broker.name; containerId = $run.containerId; imageId = $run.imageId; controllerMachine = [Environment]::MachineName; probes = $probes }) (Join-Path $OutputDirectory 'clock-alignment.json')
+    if (-not $ready) { throw 'Controller/broker clock alignment is unready; see clock-alignment.json (2000 ms conservative bound). Check offsets and probe uncertainty before retrying.' }
 }
 
 function Write-Capture($Broker) {
@@ -345,7 +370,7 @@ try {
             Write-JsonFile ([ordered]@{ broker = $broker.name; context = $context; containerId = $container.Id; imageId = $container.Image; requestedImage = $container.Config.Image; effectiveConfigs = @($compose.configs); inputHashes = $hashes; startedAt = [DateTimeOffset]::UtcNow.ToString('O') }) (Join-Path $OutputDirectory 'run-provenance.json')
             $status = 'started'
         }
-        'health' { [void](Get-Run $broker); Test-MqttReadiness $broker.mqttUri; $status = 'healthy' }
+        'health' { [void](Get-Run $broker); Wait-MqttReadiness $broker; $status = 'healthy' }
         'clock' { Write-ClockAlignment $broker; $status = 'clock-aligned' }
         'fence' {
             $run = Get-Run $broker

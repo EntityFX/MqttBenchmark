@@ -6,6 +6,37 @@ namespace EntityFX.MqttBenchmark.Tests;
 [TestClass]
 public class CampaignStandTests
 {
+    [TestMethod]
+    public async Task StandClock_AlignedDaemonHighResolutionAvoidsWholeSecondHighRttFalseRejection()
+    {
+        await using var broker = await LocalBroker.StartAsync();
+        using var fixture = new CampaignStandFixture(broker.Uri);
+        File.WriteAllText(System.IO.Path.Combine(fixture.Path, "clock-delay"), "1100");
+        File.WriteAllText(System.IO.Path.Combine(fixture.Path, "clock-whole-second-boundary"), "true");
+        await using var session = await StandSession.StartAsync(fixture.Script, fixture.InventoryPath,
+            new CampaignDefinition(), "Mosquitto", fixture.Output, fixture.Docker);
+        var clock = JsonNode.Parse(File.ReadAllText(System.IO.Path.Combine(fixture.Output, "clock-alignment.json")))!;
+        Assert.IsTrue(clock["ready"]!.GetValue<bool>());
+        Assert.AreEqual(3, clock["probes"]!.AsArray().Count);
+        Assert.IsTrue(clock["uncertaintyMs"]!.GetValue<double>() < 1000);
+    }
+
+    [TestMethod]
+    public async Task StandClock_SelectsSmallestRttEvenWhenFirstProbeIsTooUncertain()
+    {
+        await using var broker = await LocalBroker.StartAsync();
+        using var fixture = new CampaignStandFixture(broker.Uri);
+        File.WriteAllText(System.IO.Path.Combine(fixture.Path, "clock-delay"), "1100");
+        File.WriteAllText(System.IO.Path.Combine(fixture.Path, "clock-first-delay"), "2500");
+        await using var session = await StandSession.StartAsync(fixture.Script, fixture.InventoryPath,
+            new CampaignDefinition(), "Mosquitto", fixture.Output, fixture.Docker);
+        var clock = JsonNode.Parse(File.ReadAllText(System.IO.Path.Combine(fixture.Output, "clock-alignment.json")))!;
+        Assert.IsTrue(clock["ready"]!.GetValue<bool>());
+        var probes = clock["probes"]!.AsArray();
+        Assert.IsTrue(probes[0]!["roundTripMs"]!.GetValue<double>() > 2400);
+        Assert.IsTrue(clock["uncertaintyMs"]!.GetValue<double>() < 1000, "The selected probe must not be the slow first probe.");
+    }
+
     [DataTestMethod]
     [DataRow(195)] [DataRow(-195)]
     public async Task StandClock_RejectsMisalignmentAndRetainsOffsetEvidence(int seconds)
