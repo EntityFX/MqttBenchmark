@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 2,
+  "brokers": [
+    { "name": "Mosquitto", "uri": "mqtt://10.114.22.62:1883" },
+    { "name": "ActiveMQ", "uri": "mqtt://10.114.22.56:1883" },
+    { "name": "Aedes", "uri": "mqtt://10.114.22.58:1883" },
+    { "name": "EMQX", "uri": "mqtt://10.114.22.57:1883" }
+  ],
+  "messageBytes": [16, 256],
+  "qos": [0, 1, 2],
+  "clients": [1, 2, 4, 8, 16, 32, 64, 128],
+  "warmupSeconds": 5,
+  "measurementSeconds": 30,
+  "repeats": 10
+}

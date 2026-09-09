@@ -1,92 +1,127 @@
-﻿using EntityFX.MqttBenchmark;
-using System.CommandLine;
-using System.CommandLine.Binding;
+using EntityFX.MqttBenchmark.Calibration;
 
-var settingsBinder = new SettingsBinder(
-    hostArgument : new Argument<string>("host", "Mqtt host (IP or domain adress with port), e.g. mqtt://localhost:18883"), 
-    topicOption : new Option<string>(new string[] { "-t", "--topic" }, "Topic"),
-    qosOption : new Option<int>(new string[] { "-q", "--qos" }, () => 1, "QoS (Quality of Service)"),
-    clientsOption : new Option<int>(new string[] { "-c", "--clients" }, () => 10, "Clients count to simulate"),
-    payloadOption: new Option<string>(new string[] { "-l", "--payload" }, "Payload value as stings"),
-    maxMessageSizeOption: new Option<int>(new string[] { "-s", "--max-size" }, () => 1024, "Max message size in bytes"),
-    messageCountOption: new Option<int>(new string[] { "-m", "--message-count" }, () => 10, "Max messages for benchmark"),
-    userOption: new Option<string>(new string[] { "-u", "--username" }, "Mqtt auth user"),
-    passwordOption: new Option<string>(new string[] { "-p", "--password" }, "Mqtt auth password")
-);
+return await Cli.RunAsync(args);
 
-var rootCommand = settingsBinder.GetRootCommand();
-
-rootCommand.SetHandler((settings) =>
+internal static class Cli
 {
-    //DoRootCommand(fileOptionValue, person);
-}, settingsBinder);
-
-rootCommand.Invoke(args);
-Console.ReadKey();
-
-public class SettingsBinder : BinderBase<Settings>
-{
-    private readonly Argument<string> _hostArgument;
-    private readonly Option<string> _topicOption;
-    private readonly Option<int> _qosOption;
-    private readonly Option<int> _clientsOption;
-    private readonly Option<string> _payloadOption;
-    private readonly Option<int> _maxMessageSizeOption;
-    private readonly Option<int> _messageCountOption;
-    private readonly Option<string> _userOption;
-    private readonly Option<string> _passwordOption;
-
-    public SettingsBinder(
-        Argument<string> hostArgument, 
-        Option<string> topicOption, 
-        Option<int> qosOption,
-        Option<int> clientsOption,
-        Option<string> payloadOption,
-        Option<int> maxMessageSizeOption,
-        Option<int> messageCountOption,
-        Option<string> userOption,
-        Option<string> passwordOption)
+    public static async Task<int> RunAsync(string[] args)
     {
-        _hostArgument = hostArgument;
-        _topicOption = topicOption;
-        _qosOption = qosOption;
-        _clientsOption = clientsOption;
-        _payloadOption = payloadOption;
-        _maxMessageSizeOption = maxMessageSizeOption;
-        _messageCountOption = messageCountOption;
-        _userOption = userOption;
-        _passwordOption = passwordOption;
+        if (args.Length == 0 || args[0] is "help" or "--help" or "-h")
+        {
+            PrintHelp();
+            return args.Length == 0 ? 1 : 0;
+        }
+
+        try
+        {
+            var options = Parse(args.Skip(1).ToArray());
+            return args[0] switch
+            {
+                "matrix" => await RunMatrixAsync(options),
+                "aggregate" => RunAggregate(options),
+                _ => throw new ArgumentException($"Unknown command '{args[0]}'.")
+            };
+        }
+        catch (Exception exception)
+        {
+            Console.Error.WriteLine(exception.Message);
+            return 2;
+        }
     }
 
-    public RootCommand GetRootCommand()
+    private static async Task<int> RunMatrixAsync(IReadOnlyDictionary<string, string?> options)
     {
-        return new RootCommand
+        var config = Required(options, "config");
+        var output = Required(options, "output");
+        var matrix = BenchmarkMatrixStore.Read(config);
+        var runs = matrix.Expand();
+        if (options.TryGetValue("broker", out var broker) && !string.IsNullOrWhiteSpace(broker))
+            runs = runs.Where(run => string.Equals(run.Broker.Name, broker, StringComparison.Ordinal));
+        if (options.TryGetValue("max-runs", out var maxRunsValue) &&
+            int.TryParse(maxRunsValue, out var maxRuns) && maxRuns > 0)
+            runs = runs.Take(maxRuns);
+        var expanded = runs.ToArray();
+        Console.WriteLine($"Expanded runs: {expanded.Length}");
+        if (options.ContainsKey("dry-run")) return 0;
+
+        var campaign = options.TryGetValue("campaign", out var campaignValue) &&
+            !string.IsNullOrWhiteSpace(campaignValue)
+                ? campaignValue
+                : $"{DateTimeOffset.UtcNow:yyyyMMddTHHmmssZ}-{Guid.NewGuid():N}";
+        var rawDirectory = Path.Combine(output, campaign!);
+        Directory.CreateDirectory(rawDirectory);
+        var runner = new MqttMatrixRunner();
+        using var cancellation = new CancellationTokenSource();
+        Console.CancelKeyPress += (_, eventArgs) =>
         {
-            _hostArgument,
-            _topicOption,
-            _qosOption,
-            _clientsOption,
-            _payloadOption,
-            _maxMessageSizeOption,
-            _messageCountOption,
-            _userOption,
-            _passwordOption
+            eventArgs.Cancel = true;
+            cancellation.Cancel();
         };
+        for (var index = 0; index < expanded.Length; index++)
+        {
+            var spec = expanded[index];
+            Console.WriteLine($"[{index + 1}/{expanded.Length}] {spec.Broker.Name} " +
+                $"m={spec.MessageBytes} q={spec.Qos} c={spec.Clients} r={spec.Repeat}");
+            var result = await runner.RunAsync(spec, cancellation.Token);
+            var path = RawArtifactStore.WriteUnique(rawDirectory, result);
+            Console.WriteLine($"  raw: {path}");
+        }
+        return 0;
     }
 
-    protected override Settings GetBoundValue(BindingContext bindingContext)
+    private static int RunAggregate(IReadOnlyDictionary<string, string?> options)
     {
-        return new Settings
+        var config = Required(options, "config");
+        var raw = Required(options, "raw");
+        var output = Required(options, "output");
+        var mqttYRepository = Required(options, "mqtt-y-repo");
+        var benchmarkRepository = options.TryGetValue("benchmark-repo", out var benchmarkPath) &&
+            !string.IsNullOrWhiteSpace(benchmarkPath) ? benchmarkPath! : Directory.GetCurrentDirectory();
+
+        var matrix = BenchmarkMatrixStore.Read(config);
+        var rows = RawArtifactStore.ReadTree(raw);
+        var aggregates = BenchmarkAggregator.Aggregate(rows, matrix.Repeats);
+        BenchmarkAggregator.ValidateCoverage(aggregates, matrix);
+        Directory.CreateDirectory(output);
+        AggregatedArtifactStore.WriteCsvNew(Path.Combine(output, "aggregated.csv"), aggregates);
+        AggregatedArtifactStore.WriteJsonNew(Path.Combine(output, "aggregated.json"), aggregates);
+        var provenance = new ProfileProvenance(
+            GitRevisionReader.ReadHead(mqttYRepository),
+            GitRevisionReader.ReadHead(benchmarkRepository),
+            RawArtifactStore.HashTree(raw), DateTimeOffset.UtcNow,
+            matrix.WarmupSeconds, matrix.MeasurementSeconds, matrix.Repeats);
+        var profile = BrokerProfileGenerator.Generate(aggregates, provenance);
+        BrokerProfileGenerator.WriteNew(Path.Combine(output, "broker-benchmark.v2.json"), profile);
+        Console.WriteLine($"Aggregated {rows.Count} immutable raw runs into {output}.");
+        return 0;
+    }
+
+    private static Dictionary<string, string?> Parse(string[] args)
+    {
+        var result = new Dictionary<string, string?>(StringComparer.Ordinal);
+        for (var index = 0; index < args.Length; index++)
         {
-            Broker = new Uri(bindingContext.ParseResult.GetValueForArgument(_hostArgument)),
-            Topic = bindingContext.ParseResult.GetValueForOption(_topicOption),
-            Qos = bindingContext.ParseResult.GetValueForOption(_qosOption),
-            Clients = bindingContext.ParseResult.GetValueForOption(_clientsOption),
-            Payload = bindingContext.ParseResult.GetValueForOption(_payloadOption),
-            MessageSize = bindingContext.ParseResult.GetValueForOption(_maxMessageSizeOption),
-            MessageCount = bindingContext.ParseResult.GetValueForOption(_messageCountOption),
-            Username = bindingContext.ParseResult.GetValueForOption(_userOption),
-            Password = bindingContext.ParseResult.GetValueForOption(_passwordOption),
-        };
+            var argument = args[index];
+            if (!argument.StartsWith("--", StringComparison.Ordinal))
+                throw new ArgumentException($"Expected an option, got '{argument}'.");
+            var key = argument[2..];
+            string? value = null;
+            if (index + 1 < args.Length && !args[index + 1].StartsWith("--", StringComparison.Ordinal))
+                value = args[++index];
+            if (!result.TryAdd(key, value)) throw new ArgumentException($"Duplicate option '--{key}'.");
+        }
+        return result;
+    }
+
+    private static string Required(IReadOnlyDictionary<string, string?> options, string name) =>
+        options.TryGetValue(name, out var value) && !string.IsNullOrWhiteSpace(value)
+            ? value
+            : throw new ArgumentException($"Required option '--{name}' is missing.");
+
+    private static void PrintHelp()
+    {
+        Console.WriteLine("MqttBenchmark reproducible calibration pipeline");
+        Console.WriteLine("  matrix --config <json> --output <raw-root> [--campaign <id>] [--broker <name>] [--max-runs <n>] [--dry-run]");
+        Console.WriteLine("  aggregate --config <json> --raw <campaign-dir> --output <dir> --mqtt-y-repo <dir> [--benchmark-repo <dir>]");
     }
 }
