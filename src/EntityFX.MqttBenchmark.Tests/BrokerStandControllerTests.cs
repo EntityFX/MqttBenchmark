@@ -15,14 +15,21 @@ public class BrokerStandControllerTests
         try
         {
             var configPath = Path.Combine(directory, "infra.json");
-            File.WriteAllText(configPath, "{ \"token\": \"${MQTTBENCHMARK_TEST_TOKEN}\" }");
-            Environment.SetEnvironmentVariable(variable, "test-only-value");
-            var resolvedPath = InfraConfigEnvironmentResolver.ResolveToTemporaryFile(configPath);
-            Assert.AreEqual("test-only-value", JsonDocument.Parse(File.ReadAllText(resolvedPath)).RootElement.GetProperty("token").GetString());
+            File.WriteAllText(configPath, "{ \"token\": \"${MQTTBENCHMARK_TEST_TOKEN}\", \"items\": [\"${MQTTBENCHMARK_TEST_TOKEN}\"] }");
+            Environment.SetEnvironmentVariable(variable, "quote-\\-line\nvalue");
+            string resolvedPath;
+            using (var lease = InfraConfigEnvironmentResolver.Resolve(configPath))
+            {
+                resolvedPath = lease.Path;
+                var json = JsonDocument.Parse(File.ReadAllText(resolvedPath));
+                Assert.AreEqual("quote-\\-line\nvalue", json.RootElement.GetProperty("token").GetString());
+                Assert.AreEqual("quote-\\-line\nvalue", json.RootElement.GetProperty("items")[0].GetString());
+            }
+            Assert.IsFalse(File.Exists(resolvedPath));
 
             Environment.SetEnvironmentVariable(variable, null);
             var exception = Assert.ThrowsException<InvalidDataException>(() =>
-                InfraConfigEnvironmentResolver.ResolveToTemporaryFile(configPath));
+                InfraConfigEnvironmentResolver.Resolve(configPath));
             StringAssert.Contains(exception.Message, variable);
             Assert.IsFalse(exception.Message.Contains("test-only-value"));
         }
@@ -154,7 +161,8 @@ public class BrokerStandControllerTests
             var telemetry = File.ReadAllText(Path.Combine(directory, "telemetry.ndjson"));
             Assert.IsTrue(telemetry.Contains("timestamp"));
             Assert.IsTrue(telemetry.Contains("cgroupCpuAndThrottle"));
-            Assert.IsTrue(telemetry.Contains("cgroupRssBytes"));
+            Assert.IsTrue(telemetry.Contains("cgroupMemoryCurrentBytes"));
+            Assert.IsTrue(telemetry.Contains("host-shared"));
             Assert.IsTrue(File.ReadAllText(Path.Combine(directory, "versions.json")).Contains("requestedImage"));
         }
         finally
@@ -278,10 +286,12 @@ public class BrokerStandControllerTests
             "if ($joined -match ' stats ') { '{\"CPUPerc\":\"1.00%\",\"MemUsage\":\"100MiB / 4GiB\",\"NetIO\":\"1kB / 2kB\",\"BlockIO\":\"3kB / 4kB\"}'; exit 0 }\n" +
             "if ($joined -match 'cpu.stat') { 'usage_usec 1`nnr_throttled 2'; exit 0 }\n" +
             "if ($joined -match 'memory.current') { '104857600'; exit 0 }\n" +
+            "if ($joined -match 'VmRSS') { 'VmRSS: 102400 kB'; exit 0 }\n" +
             "if ($joined -match 'ps -a') { 'mosquitto`naedes'; exit 0 }\n" +
             "if ($joined -match 'inspect') { 'running'; exit 0 }\n" +
             "if ($joined -match ' logs ') { '2026-09-09T00:00:00Z ready'; exit 0 }\n" +
-            $"'{response}'\n");
+            $"if ($joined -match ' compose | pull | build | rm | stop |/proc/net/dev|io.stat|ss -tan') {{ '{response}'; exit 0 }}\n" +
+            "throw \"unsupported docker command: $joined\"\n");
         return dockerPath;
     }
 

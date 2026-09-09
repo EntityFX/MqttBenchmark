@@ -1,5 +1,7 @@
 using System.Text.RegularExpressions;
 using System.Text.Json.Nodes;
+using System.Security.AccessControl;
+using System.Security.Principal;
 
 namespace EntityFX.MqttBenchmark.Bomber;
 
@@ -7,14 +9,21 @@ public static class InfraConfigEnvironmentResolver
 {
     private static readonly Regex EnvironmentReference = new(@"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", RegexOptions.Compiled);
 
-    public static string ResolveToTemporaryFile(string sourcePath)
+    public static InfraConfigLease Resolve(string sourcePath)
     {
         var source = JsonNode.Parse(File.ReadAllText(sourcePath)) ?? throw new InvalidDataException("Infrastructure configuration is empty.");
         ResolveNode(source);
         var destination = Path.GetTempFileName();
         File.WriteAllText(destination, source.ToJsonString());
-        File.SetAttributes(destination, File.GetAttributes(destination) | FileAttributes.Temporary);
-        return destination;
+        File.SetAttributes(destination, File.GetAttributes(destination) | FileAttributes.Temporary | FileAttributes.Hidden);
+        if (OperatingSystem.IsWindows())
+        {
+            var security = new FileSecurity();
+            security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+            security.AddAccessRule(new FileSystemAccessRule(WindowsIdentity.GetCurrent().User!, FileSystemRights.FullControl, AccessControlType.Allow));
+            new FileInfo(destination).SetAccessControl(security);
+        }
+        return new InfraConfigLease(destination);
     }
 
     private static void ResolveNode(JsonNode node)
@@ -27,8 +36,8 @@ public static class InfraConfigEnvironmentResolver
         }
         if (node is JsonArray array)
         {
-            foreach (var item in array)
-                if (item is not null) ResolveNode(item);
+            for (var index = 0; index < array.Count; index++)
+                if (array[index] is not null) ResolveNode(array[index]!);
             return;
         }
         if (node is not JsonValue value || !value.TryGetValue<string>(out var text)) return;
@@ -39,5 +48,16 @@ public static class InfraConfigEnvironmentResolver
         if (string.IsNullOrEmpty(resolved))
             throw new InvalidDataException($"Required environment variable '{name}' is not set.");
         value.ReplaceWith(resolved);
+    }
+}
+
+public sealed class InfraConfigLease : IDisposable
+{
+    public InfraConfigLease(string path) => Path = path;
+    public string Path { get; }
+
+    public void Dispose()
+    {
+        if (File.Exists(Path)) File.Delete(Path);
     }
 }

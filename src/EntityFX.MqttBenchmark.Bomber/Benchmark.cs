@@ -142,6 +142,7 @@ internal class Benchmark
         ScenarioParamsTemplate scenarioParamsTemplate,
         string fileName, Dictionary<string, long> scenarioReceiveCounetrs)
     {
+        using var infraConfig = InfraConfigEnvironmentResolver.Resolve("infra-config.json");
         foreach (var testItem in scenarioSubSubGroup)
         {
             NBomberRunner
@@ -149,7 +150,7 @@ internal class Benchmark
                     new MqttScenarioBuilder(logger, configuration, scenarioReceiveCounetrs, scenarioTimeStats, mqttCounterClient)
                     .Build(testItem.Key)
                 )
-                .LoadInfraConfig(InfraConfigEnvironmentResolver.ResolveToTemporaryFile("infra-config.json"))
+                .LoadInfraConfig(infraConfig.Path)
                 .LoadConfig(fileName)
                 .WithReportFileName(testItem.Key)
                 .WithReportFolder(Path.Combine("reports", this.settings.Name, startTimePath, testItem.Key))
@@ -164,13 +165,14 @@ internal class Benchmark
         ScenarioParamsTemplate scenarioParamsTemplate,
         string firstTest, string fileName)
     {
+        using var infraConfig = InfraConfigEnvironmentResolver.Resolve("infra-config.json");
         NBomberRunner
         .RegisterScenarios(
             scenarioSubSubGroup.Keys.Select(
                 s => new MqttScenarioBuilder(
                     logger, configuration, scenarioReceiveCounetrs, scenarioTimeStats, mqttCounterClient).Build(s)).ToArray()
         )
-        .LoadInfraConfig(InfraConfigEnvironmentResolver.ResolveToTemporaryFile("infra-config.json"))
+        .LoadInfraConfig(infraConfig.Path)
         .LoadConfig(fileName)
         .WithReportFileName(firstTest)
         .WithReportFolder(Path.Combine("reports", this.settings.Name, startTimePath, firstTest))

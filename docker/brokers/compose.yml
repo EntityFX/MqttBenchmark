@@ -3,7 +3,6 @@ name: mqttbenchmark-brokers
 x-broker-defaults: &broker-defaults
   restart: unless-stopped
   mem_limit: 4g
-  cpuset: "0"
   network_mode: host
   labels:
     mqttbenchmark.broker: "true"
@@ -20,7 +19,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.aedes
-    image: ${AEDES_IMAGE:-local/mqttbenchmark-aedes:build-inputs}
+    image: ${AEDES_IMAGE:-local/mqttbenchmark-aedes:1.1.2-node20-alpine-build-inputs-sha256}
     container_name: aedes
 
   mosquitto:

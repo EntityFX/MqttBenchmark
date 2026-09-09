@@ -66,3 +66,21 @@
 ### Remaining remote verification
 
 - Local Docker remains unavailable. The remote controller must render Compose, build both custom images, record their image IDs, validate actual host listener/control-interface bindings, and exercise multi-sample capture under the temporary outbound tunnel.
+
+## Fix round 3
+
+- Custom image tags are now identical between inventory and Compose. `pull` builds both Aedes and ActiveMQ, inspects the local tag, and records its immutable local image ID plus hashes of every build input. `start` accepts an unresolved build identity only when its recorded artifact matches the selected image and current local image ID; it never forms an invalid `repo@local-image-id` reference.
+- Removed inherited base CPU pinning. `hostAllCores` accepts empty/null CPU sets and emits no pin; `singleCorePinned` remains a one-CPU constraint.
+- Effective configuration generation now writes concrete Mosquitto, EMQX, and ActiveMQ MQTT inputs with absolute, single-quoted bind sources. Direct host networking remains mandatory and no `ports:` stanza is generated.
+- Capture honors `CaptureSeconds`, appending a one-second NDJSON sample per requested second. It labels cgroup memory accurately, records process RSS separately, uses cgroup I/O, and labels host-network connection/network figures as host-shared.
+- The infra resolver now returns an `IDisposable` lease. It parses JSON nodes (including arrays), safely round-trips quotes/backslashes/newlines, uses a Windows owner-only ACL, and both benchmark callers dispose the runtime secret file with `using`/finally semantics.
+
+### Fix-round RED/GREEN evidence
+
+- RED: the lease-based resolver test did not compile before `Resolve` and `InfraConfigLease` existed; GREEN: the test verifies array expansion, JSON escaping, unset-variable safety, and disposal cleanup.
+- RED: the pre-round generated override retained published ports; GREEN: controller tests assert host network mode, no ports, exact listener environment, lifecycle cleanup, and cgroup telemetry labels.
+
+### Fix-round verification
+
+- Focused controller/resolver tests: 9 passed, 0 failed.
+- Full suite: `dotnet test src\EntityFX.MqttBenchmark.sln --no-restore` — 19 passed, 0 failed, 0 skipped.

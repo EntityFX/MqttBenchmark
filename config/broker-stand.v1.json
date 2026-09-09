@@ -24,7 +24,7 @@
     {
       "name": "ActiveMQ", "loaded": false, "serviceName": "activemq", "containerName": "activemq",
       "mqttUri": "mqtt://127.0.0.1:3883", "singleHostMqttPort": 3883, "distributedMqttPort": 1883,
-      "managementUri": "http://127.0.0.1:8161", "image": "apache/activemq-classic:6.3.2",
+      "managementUri": "http://127.0.0.1:8161", "image": "local/mqttbenchmark-activemq:6.3.2-build-inputs",
       "digest": null, "digestProvenance": { "status": "unresolved", "reason": "Requested upstream tag has no verified manifest digest." },
       "cpuset": "0", "memoryLimit": 4294967296
     },
