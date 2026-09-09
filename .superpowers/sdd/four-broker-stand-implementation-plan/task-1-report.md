@@ -49,3 +49,20 @@
 - Focused controller/resolver suite: 9 passed, 0 failed.
 - The local host provides Node 18 only, so `npm ci --dry-run --ignore-scripts` validates lockfile resolution with expected Node>=20 engine warnings; target-image verification requires the Node 20 Docker build.
 - Docker and outbound 443 are unavailable locally.  No remote shell or credential access was attempted.  The remote controller run must verify image pulls/builds, host-network listener bindings, and broker readiness through the arranged tunnel.
+
+## Fix round 2
+
+- Corrected Aedes 1.1.2 startup to use `Aedes.createBroker()` and regenerated `package-lock.json` with Node 20 against the npm registry. A Node 20 `npm ci --dry-run --ignore-scripts` clean resolution completed with 0 vulnerabilities.
+- Made the base Compose file render without mandatory image variables while retaining direct Linux host networking and no published ports. The effective override now drives host-network mode, MQTT listener environment, CPU pinning, memory limit, and concrete per-run Mosquitto/EMQX configurations.
+- Active broker selection is now based on `activeBroker` and requires exactly that inventory entry to be loaded; distributed mode selects the active broker's Docker context. Aedes and ActiveMQ both take the custom build branch and record their local immutable image ID in a build-provenance artifact.
+- Capture no longer reads `/proc/self/io`; host-network network and connection fields are marked host-shared. The environment resolver now parses JSON nodes before replacement, so quotes, backslashes, and newlines are JSON-escaped rather than text-injected.
+
+### Fix-round verification
+
+- `npx --yes node@20 <npm-cli> install --package-lock-only --ignore-scripts` followed by `ci --dry-run --ignore-scripts`: success, 27 packages, 0 vulnerabilities.
+- `dotnet test src\EntityFX.MqttBenchmark.sln --no-restore`: 19 passed, 0 failed, 0 skipped. Existing unrelated nullable warning in `Benchmark.cs:268` remains.
+- `git diff --check`: no whitespace errors (only repository CRLF conversion notices).
+
+### Remaining remote verification
+
+- Local Docker remains unavailable. The remote controller must render Compose, build both custom images, record their image IDs, validate actual host listener/control-interface bindings, and exercise multi-sample capture under the temporary outbound tunnel.

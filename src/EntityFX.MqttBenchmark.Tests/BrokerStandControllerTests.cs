@@ -121,7 +121,7 @@ public class BrokerStandControllerTests
             File.WriteAllText(configPath, TwoLoadedInventoryJson());
             var loadedResult = RunController("validate", configPath, directory);
             Assert.AreNotEqual(0, loadedResult.ExitCode);
-            StringAssert.Contains(loadedResult.StandardError, "exactly one loaded broker");
+            StringAssert.Contains(loadedResult.StandardError, "active broker must be loaded");
 
             File.WriteAllText(configPath, InventoryJson().Replace("\"cpuset\": \"0\"", "\"cpuset\": \"0-1\""));
             var cpuResult = RunController("validate", configPath, directory);

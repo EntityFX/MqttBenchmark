@@ -1,8 +1,8 @@
-const { createBroker } = require('aedes');
+const { Aedes } = require('aedes');
 const { createServer } = require('net');
 
 async function main() {
-  const broker = await createBroker();
+  const broker = await Aedes.createBroker();
   const server = createServer(broker.handle);
   const port = Number.parseInt(process.env.MQTT_PORT || '1883', 10);
 

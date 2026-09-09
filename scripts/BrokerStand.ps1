@@ -9,6 +9,9 @@ param(
 
     [string]$OutputDirectory = 'artifacts/broker-stand',
 
+    [ValidateRange(1, 86400)]
+    [int]$CaptureSeconds = 1,
+
     [string]$DockerExecutable = 'docker'
 )
 
@@ -67,8 +70,8 @@ function Test-BrokerStandInventory {
     }
 
     $loaded = @($brokers | Where-Object { $_.loaded -eq $true })
-    if ($deploymentMode -eq 'singleHostSequential' -and $loaded.Count -ne 1) {
-        throw 'Single-host mode requires exactly one loaded broker.'
+    if ($loaded.Count -ne 1 -or $loaded[0].name -ne $Inventory.activeBroker) {
+        throw 'Exactly the active broker must be loaded.'
     }
 
     $endpoints = @{}
@@ -84,7 +87,7 @@ function Test-BrokerStandInventory {
         $digestProperty = $broker.PSObject.Properties['digest']
         $digest = if ($null -eq $digestProperty) { '' } else { [string]$digestProperty.Value }
         $provenance = $broker.PSObject.Properties['digestProvenance']
-        if ($broker.name -eq $Inventory.activeBroker -and ($digest -notmatch '^sha256:[0-9a-f]{64}$' -or $digest -match '^sha256:(.)\1{63}$' -or
+        if ($Action -ne 'pull' -and $broker.name -eq $Inventory.activeBroker -and ($digest -notmatch '^sha256:[0-9a-f]{64}$' -or $digest -match '^sha256:(.)\1{63}$' -or
             $null -eq $provenance -or $provenance.Value.status -ne 'verified')) {
             throw "Broker '$($broker.name)' has unresolved image identity; resolve an immutable digest with verified provenance before deployment."
         }
@@ -102,10 +105,6 @@ function Test-BrokerStandInventory {
         }
     }
 
-    if ($deploymentMode -eq 'singleHostSequential' -and $loaded[0].name -ne $Inventory.activeBroker) {
-        throw 'The active broker must be the single loaded broker.'
-    }
-
     $campaign = $Inventory.PSObject.Properties['campaign']
     if ($null -ne $campaign -and $null -ne $campaign.Value) {
         if ($campaign.Value.deploymentMode -ne $deploymentMode) {
@@ -120,7 +119,18 @@ function Test-BrokerStandInventory {
 function Get-ActiveBroker {
     param([Parameter(Mandatory = $true)]$Inventory)
 
-    return @($Inventory.brokers | Where-Object { $_.loaded -eq $true })[0]
+    $matches = @($Inventory.brokers | Where-Object { $_.name -eq $Inventory.activeBroker })
+    if ($matches.Count -ne 1) { throw "Active broker '$($Inventory.activeBroker)' is not in inventory." }
+    return $matches[0]
+}
+
+function Get-DockerContext {
+    param([Parameter(Mandatory = $true)]$Inventory, [Parameter(Mandatory = $true)]$Broker)
+
+    if ($Inventory.deploymentMode -eq 'distributedHosts') {
+        return [string](Get-RequiredProperty $Broker 'dockerContext')
+    }
+    return [string](Get-RequiredProperty $Inventory 'dockerContext')
 }
 
 function Invoke-Docker {
@@ -150,9 +160,15 @@ function New-EffectiveComposeOverride {
     $image = "$($Broker.image)@$($Broker.digest)"
     $lines = @('services:', "  $($Broker.serviceName):", "    image: $image", '    network_mode: host', '    mem_limit: 4g', '    environment:', "      - MQTT_PORT=$port", "      - CONTROL_INTERFACE=$($Inventory.controlInterface)")
     if ($Inventory.cpuMode -eq 'singleCorePinned') { $lines += "    cpuset: `"$($Broker.cpuset)`"" }
-    if ($null -ne $Broker.managementUri) {
-        $management = [Uri]$Broker.managementUri
-        $lines += "      - `"$($Inventory.controlInterface):$($management.Port):$($management.Port)`""
+    if ($Broker.name -eq 'Mosquitto') {
+        $brokerConfig = Join-Path $OutputDirectory 'mosquitto.conf'
+        @("listener $port 0.0.0.0", 'allow_anonymous true', 'persistence false', 'log_dest stdout', 'log_type warning', 'connection_messages false') | Set-Content -LiteralPath $brokerConfig
+        $lines += @('    volumes:', "      - `"$brokerConfig`:/mosquitto/config/mosquitto.conf:ro`"")
+    }
+    if ($Broker.name -eq 'EMQX') {
+        $brokerConfig = Join-Path $OutputDirectory 'emqx.conf'
+        @("listeners.tcp.default.bind = `"0.0.0.0:$port`"", "dashboard.listeners.http.bind = `"$($Inventory.controlInterface):18083`"", 'durable_sessions.enable = false', 'log.console.level = warning') | Set-Content -LiteralPath $brokerConfig
+        $lines += @('    volumes:', "      - `"$brokerConfig`:/opt/emqx/etc/emqx.conf:ro`"")
     }
     $path = Join-Path $OutputDirectory 'effective-compose.yml'
     Set-Content -LiteralPath $path -Value $lines
@@ -163,10 +179,11 @@ function Stop-OtherStandContainers {
     param([Parameter(Mandatory = $true)]$Inventory, [Parameter(Mandatory = $true)]$Broker)
 
     if ($Inventory.deploymentMode -ne 'singleHostSequential') { return }
-    $names = Invoke-Docker @('--context', [string]$Inventory.dockerContext, 'ps', '-a', '--filter', 'label=mqttbenchmark.broker=true', '--format', '{{.Names}}')
+    $context = Get-DockerContext $Inventory $Broker
+    $names = Invoke-Docker @('--context', $context, 'ps', '-a', '--filter', 'label=mqttbenchmark.broker=true', '--format', '{{.Names}}')
     foreach ($name in @($names -split "`r?`n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })) {
         if ($name -ne $Broker.containerName) {
-            Invoke-Docker @('--context', [string]$Inventory.dockerContext, 'rm', '-f', $name) | Out-Null
+            Invoke-Docker @('--context', $context, 'rm', '-f', $name) | Out-Null
         }
     }
 }
@@ -222,7 +239,7 @@ function Write-Capture {
     $logsDirectory = Join-Path $OutputDirectory 'logs'
     New-Item -ItemType Directory -Force -Path $logsDirectory | Out-Null
 
-    $context = [string]$Inventory.dockerContext
+    $context = Get-DockerContext $Inventory $Broker
     $container = [string](Get-RequiredProperty $Broker 'containerName')
     $version = Invoke-Docker @('--context', $context, 'version', '--format', '{{json .}}')
     $imageIdentity = Invoke-Docker @('--context', $context, 'image', 'inspect', '--format', '{{json .}}', "$($Broker.image)@$($Broker.digest)")
@@ -234,7 +251,7 @@ function Write-Capture {
     $throttling = Invoke-Docker @('--context', $context, 'exec', $container, 'cat', '/sys/fs/cgroup/cpu.stat')
     $rss = Invoke-Docker @('--context', $context, 'exec', $container, 'cat', '/sys/fs/cgroup/memory.current')
     $network = Invoke-Docker @('--context', $context, 'exec', $container, 'cat', '/proc/net/dev')
-    $diskIo = Invoke-Docker @('--context', $context, 'exec', $container, 'cat', '/proc/self/io')
+    $diskIo = Invoke-Docker @('--context', $context, 'exec', $container, 'cat', '/sys/fs/cgroup/io.stat')
     $connections = Invoke-Docker @('--context', $context, 'exec', $container, 'ss', '-tan')
     [ordered]@{
         timestamp = [DateTimeOffset]::UtcNow.ToString('O')
@@ -243,8 +260,10 @@ function Write-Capture {
         cgroupCpuAndThrottle = $throttling
         cgroupRssBytes = $rss
         network = $network
+        networkScope = 'host-shared'
         diskIo = $diskIo
         connections = $connections
+        connectionsScope = 'host-shared'
     } | ConvertTo-Json -Compress | Add-Content -LiteralPath (Join-Path $OutputDirectory 'telemetry.ndjson')
 
     $logs = Invoke-Docker @('--context', $context, 'logs', '--timestamps', $container)
@@ -274,13 +293,17 @@ try {
     Test-BrokerStandInventory $inventory
 
     $activeBroker = Get-ActiveBroker $inventory
-    $context = [string]$inventory.dockerContext
+    $context = Get-DockerContext $inventory $activeBroker
     switch ($Action) {
         'validate' { Write-ControllerResult -Status 'valid' -Message 'Broker stand inventory is valid.'; break }
         'pull' {
-            if ($activeBroker.name -eq 'Aedes') {
+            if ($activeBroker.name -in @('Aedes', 'ActiveMQ')) {
                 $service = [string](Get-RequiredProperty $activeBroker 'serviceName')
                 Invoke-Docker @('--context', $context, 'compose', '-f', (Get-ComposePath), 'build', $service) | Out-Null
+                New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
+                $imageId = Invoke-Docker @('--context', $context, 'image', 'inspect', '--format', '{{.Id}}', [string]$activeBroker.image)
+                [ordered]@{ broker = $activeBroker.name; image = $activeBroker.image; imageId = $imageId; capturedAt = [DateTimeOffset]::UtcNow.ToString('O') } |
+                    ConvertTo-Json | Set-Content -LiteralPath (Join-Path $OutputDirectory 'build-provenance.json')
             }
             else {
                 Invoke-Docker @('--context', $context, 'pull', "$($activeBroker.image)@$($activeBroker.digest)") | Out-Null

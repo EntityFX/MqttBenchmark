@@ -20,13 +20,13 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.aedes
-    image: ${AEDES_IMAGE:?Resolve Aedes image identity before starting the stand.}
+    image: ${AEDES_IMAGE:-local/mqttbenchmark-aedes:build-inputs}
     container_name: aedes
 
   mosquitto:
     <<: *broker-defaults
     profiles: [mosquitto]
-    image: ${MOSQUITTO_IMAGE:?Resolve Mosquitto image identity before starting the stand.}
+    image: ${MOSQUITTO_IMAGE:-eclipse-mosquitto:2.1.2-alpine@sha256:6f8d8a947c506f8a2290ec65cd4bd2bc7cb4d43fb5f6271f861cb013e2ef9797}
     container_name: mosquitto
     volumes:
       - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
@@ -38,7 +38,7 @@ services:
     build:
       context: .
       dockerfile: activemq/Dockerfile
-    image: ${ACTIVEMQ_IMAGE:?Resolve ActiveMQ image identity before starting the stand.}
+    image: ${ACTIVEMQ_IMAGE:-local/mqttbenchmark-activemq:6.3.2-build-inputs}
     container_name: activemq
     volumes:
       - ./activemq/activemq.xml:/opt/activemq/conf/activemq.xml:ro
@@ -47,7 +47,7 @@ services:
   emqx:
     <<: *broker-defaults
     profiles: [emqx]
-    image: ${EMQX_IMAGE:?Resolve EMQX image identity before starting the stand.}
+    image: ${EMQX_IMAGE:-emqx/emqx:6.3.0@sha256:3b6d9c0c419930074b7e0e6cba07baceea584b2094d22f16ff02f6c075c3d5b8}
     container_name: emqx
     volumes:
       - ./emqx/emqx.conf:/opt/emqx/etc/emqx.conf:ro
