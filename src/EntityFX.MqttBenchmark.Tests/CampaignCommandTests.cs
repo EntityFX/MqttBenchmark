@@ -1,4 +1,5 @@
 using EntityFX.MqttBenchmark.Campaign;
+using System.Diagnostics;
 
 namespace EntityFX.MqttBenchmark.Tests;
 
@@ -41,5 +42,48 @@ public class CampaignCommandTests
         Assert.IsFalse(Directory.Exists(options["campaign"]));
         options["broker"] = "unknown";
         await Assert.ThrowsExceptionAsync<ArgumentException>(() => CampaignCommands.ExecuteAsync("matrix", options));
+    }
+
+    [TestMethod]
+    public async Task MatrixCommand_PropagatesIdentityAndRefusesStandMutationAfterFirstRun()
+    {
+        await using var broker = await LocalBroker.StartAsync();
+        using var fixture = new CampaignStandFixture(broker.Uri);
+        InitializeRepository(fixture.Path);
+        var originalHash = CampaignJson.HashFile(fixture.InventoryPath);
+        var docker = File.ReadAllText(fixture.Docker).Replace(
+            "$compose = Get-Content $a[2] -Raw | ConvertFrom-Json -AsHashtable",
+            "$compose = Get-Content $a[2] -Raw | ConvertFrom-Json -AsHashtable\n" +
+            "    $inventory.brokers[0].cpuset = '1'\n" +
+            "    $inventory | ConvertTo-Json -Depth 30 | Set-Content (Join-Path $PSScriptRoot 'stand.json')");
+        File.WriteAllText(fixture.Docker, docker);
+        var configPath = Path.Combine(fixture.Path, "campaign.json");
+        CampaignJson.WriteNew(configPath, new CampaignDefinition { WarmupSeconds = .05, MeasurementSeconds = .2,
+            CooldownSeconds = 0, QuietPeriodSeconds = .05, DrainTimeoutSeconds = .1 });
+        var campaignPath = Path.Combine(fixture.Path, "campaign");
+        var options = new Dictionary<string, string?> { ["config"] = configPath, ["stand"] = fixture.InventoryPath,
+            ["campaign"] = campaignPath, ["broker"] = "Mosquitto", ["max-runs"] = "2", ["stand-script"] = fixture.Script,
+            ["docker-executable"] = fixture.Docker, ["benchmark-repo"] = fixture.Path };
+        await Assert.ThrowsExceptionAsync<CampaignExhaustedException>(() => CampaignCommands.ExecuteAsync("matrix", options));
+        var rows = CampaignJournal.ReadAttempts(campaignPath);
+        Assert.AreEqual(1, rows.Count(x => x.Status == "success"));
+        Assert.AreEqual(3, rows.Count(x => x.Status == "failed"));
+        Assert.IsTrue(rows.All(x => x.Identity.StandSha256 == originalHash));
+        Assert.AreEqual(1, Directory.GetFiles(campaignPath, "run-provenance.json", SearchOption.AllDirectories).Length);
+        Assert.AreEqual(originalHash, CampaignJson.HashFile(Directory.GetFiles(campaignPath, "stand.source.json", SearchOption.AllDirectories).Single()));
+    }
+
+    private static void InitializeRepository(string path)
+    {
+        foreach (var arguments in new[] { new[] { "init" }, new[] { "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+            "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "Fixture" } })
+        {
+            var start = new ProcessStartInfo("git") { WorkingDirectory = path, UseShellExecute = false,
+                RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true };
+            foreach (var argument in arguments) start.ArgumentList.Add(argument);
+            using var process = Process.Start(start)!;
+            var output = process.StandardOutput.ReadToEnd(); var error = process.StandardError.ReadToEnd(); process.WaitForExit();
+            Assert.AreEqual(0, process.ExitCode, output + error);
+        }
     }
 }

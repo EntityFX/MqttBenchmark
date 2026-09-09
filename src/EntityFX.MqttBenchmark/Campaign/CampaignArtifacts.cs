@@ -25,14 +25,16 @@ public static class CampaignJson
     public static JsonSerializerOptions Options { get; } = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true };
     public static T Read<T>(string path) => JsonSerializer.Deserialize<T>(File.ReadAllBytes(path), Options)
         ?? throw new InvalidDataException($"Empty JSON document: {path}");
-    public static void WriteNew<T>(string path, T value)
+    public static void WriteNew<T>(string path, T value) => WriteBytesNew(path, JsonSerializer.SerializeToUtf8Bytes(value, Options));
+    public static void WriteBytesNew(string path, byte[] value)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
         using var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None);
-        JsonSerializer.Serialize(stream, value, Options);
+        stream.Write(value);
         stream.Flush(true);
     }
-    public static string HashFile(string path) => Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path))).ToLowerInvariant();
+    public static string HashBytes(byte[] bytes) => Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+    public static string HashFile(string path) => HashBytes(File.ReadAllBytes(path));
     public static IReadOnlyDictionary<string, string> HashTree(string root) => Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
         .Where(p => Path.GetFileName(p) != ".lock")
         .OrderBy(p => p, StringComparer.Ordinal).ToDictionary(p => Path.GetRelativePath(root, p).Replace('\\', '/'), HashFile, StringComparer.Ordinal);
@@ -101,6 +103,7 @@ public sealed class CampaignJournal : IDisposable
                 if (result.Identity != start.Identity || result.Key != start.Key || result.Attempt != start.Attempt ||
                     result.Status is not ("success" or "failed") || (result.Status == "success" && result.Observation == null))
                     throw new InvalidDataException("Attempt result does not match reserved identity.");
+                if (result.Status == "success") ValidateObservation(result.Key, result.Observation!);
                 rows.Add(result);
             }
         }
@@ -156,6 +159,8 @@ public sealed class CampaignJournal : IDisposable
             m.DeliveredAfterFailedPublish < 0 || m.DeliveredAfterFailedPublish > m.FailedPublishes ||
             m.ErrorReasons.Values.Sum() != m.FailedPublishes || !double.IsFinite(observation.RttBaselineMs) || observation.RttBaselineMs < 0)
             throw new InvalidDataException("Inconsistent measurement counts, identity, observed duration or RTT.");
+        if (key.Qos > 0 && m.CompletedPublishes == 0)
+            throw new InvalidDataException("QoS1/2 successful runs require at least one completion latency sample.");
         if ((key.Qos == 0 && (m.PublishLatencyMs != null || m.LatencyStatus != "notApplicable")) ||
             (key.Qos > 0 && m.CompletedPublishes > 0 && (m.PublishLatencyMs == null || m.LatencyStatus != "observed")))
             throw new InvalidDataException("Latency applicability differs from QoS/completion counts.");

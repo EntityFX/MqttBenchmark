@@ -1,4 +1,5 @@
 using EntityFX.MqttBenchmark.Calibration;
+using System.Text.Json;
 
 namespace EntityFX.MqttBenchmark.Campaign;
 
@@ -8,7 +9,10 @@ public static class CampaignCommands
         CancellationToken cancellationToken = default)
     {
         var configPath = Required(options, "config");
-        var config = CampaignJson.Read<CampaignDefinition>(configPath);
+        var configBytes = File.ReadAllBytes(configPath);
+        var configHash = CampaignJson.HashBytes(configBytes);
+        var config = JsonSerializer.Deserialize<CampaignDefinition>(configBytes, CampaignJson.Options)
+            ?? throw new InvalidDataException("Missing campaign configuration.");
         config.Validate();
         var keys = config.Expand();
         if (options.TryGetValue("broker", out var broker))
@@ -23,7 +27,7 @@ public static class CampaignCommands
         {
             var raw = Required(options, "raw");
             var identity = CampaignJson.Read<CampaignIdentity>(Path.Combine(raw, "campaign.json"));
-            if (identity.ConfigSha256 != CampaignJson.HashFile(configPath)) throw new InvalidDataException("Aggregation configuration hash differs from campaign input.");
+            if (identity.ConfigSha256 != configHash) throw new InvalidDataException("Aggregation configuration hash differs from campaign input.");
             using var journal = CampaignJournal.Open(raw, identity, true);
             var result = CampaignAggregator.Aggregate(config, CampaignJournal.ReadAttempts(raw), CampaignJson.HashTree(raw));
             var output = Required(options, "output");
@@ -43,7 +47,7 @@ public static class CampaignCommands
         var docker = Value(options, "docker-executable", "docker");
         var directory = Path.GetFullPath(Required(options, command == "matrix" ? "campaign" : "output"));
         var campaignIdentity = new CampaignIdentity(Path.GetFileName(directory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)),
-            CampaignJson.HashFile(configPath), CampaignJson.HashFile(standPath), config.DeploymentMode, config.CpuMode, GitRevisionReader.ReadHead(repository));
+            configHash, CampaignJson.HashFile(standPath), config.DeploymentMode, config.CpuMode, GitRevisionReader.ReadHead(repository));
         var runner = new MqttCampaignRunner();
         if (command == "preflight")
         {
@@ -57,7 +61,7 @@ public static class CampaignCommands
                 try
                 {
                     await using var stand = await StandSession.StartAsync(script, standPath, config, name,
-                        Path.Combine(directory, name, "stand"), docker, cancellationToken);
+                        Path.Combine(directory, name, "stand"), docker, cancellationToken, expectedStandSha256: campaignIdentity.StandSha256);
                     var protocol = await runner.PreflightAsync(name, stand.Endpoint, cancellationToken);
                     CampaignJson.WriteNew(Path.Combine(directory, name, "protocol.json"), protocol);
                     var telemetry = await stand.CaptureAsync(1, cancellationToken);
@@ -83,7 +87,7 @@ public static class CampaignCommands
             {
                 Console.WriteLine($"{key.Key}, attempt {number}/3");
                 await using var stand = await StandSession.StartAsync(script, standPath, config, key.Broker,
-                    Path.Combine(attemptPath, "stand"), docker, ct);
+                    Path.Combine(attemptPath, "stand"), docker, ct, expectedStandSha256: campaignIdentity.StandSha256);
                 var protocol = await runner.PreflightAsync(key.Broker, stand.Endpoint, ct);
                 CampaignJson.WriteNew(Path.Combine(attemptPath, "protocol.json"), protocol);
                 if (!protocol.Success || protocol.RttBaselineMs == null) throw new IOException("Protocol preflight failed; see protocol.json.");

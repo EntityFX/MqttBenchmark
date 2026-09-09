@@ -110,10 +110,80 @@ public class CampaignArtifactTests
             Assert.ThrowsException<InvalidDataException>(() => CampaignAggregator.Aggregate(config, mixed, new Dictionary<string, string>()));
         }
     }
+
+    [DataTestMethod]
+    [DataRow(1)] [DataRow(2)]
+    public async Task ZeroCompletions_AreFailedAndResumeCanReplaceThemWithAggregatableSuccess(int qos)
+    {
+        using var temp = new CampaignTemp();
+        var config = new CampaignDefinition();
+        var key = config.Expand().First(x => x.Qos == qos);
+        var zero = ZeroCompletions(key);
+        using (var journal = CampaignJournal.Open(temp.Path, Identity(), false))
+        using (var cancel = new CancellationTokenSource())
+        {
+            await Assert.ThrowsExceptionAsync<OperationCanceledException>(() => journal.ExecuteAsync(new[] { key },
+                (k, path, number, ct) => { cancel.Cancel(); return Task.FromResult(zero); }, cancellationToken: cancel.Token));
+        }
+        var failed = CampaignJournal.ReadAttempts(temp.Path).Single();
+        Assert.AreEqual("failed", failed.Status);
+        Assert.IsNull(failed.Observation);
+        StringAssert.Contains(failed.Failure!, "completion latency");
+        using (var resumed = CampaignJournal.Open(temp.Path, Identity(), true))
+            await resumed.ExecuteAsync(new[] { key }, (k, path, number, ct) => Task.FromResult(Observation(k)));
+        var history = CampaignJournal.ReadAttempts(temp.Path);
+        Assert.AreEqual(2, history.Single(x => x.Status == "success").Attempt);
+        var remaining = config.Expand().Where(x => x != key).Select(x => new AttemptResult(Identity(), x, 1, "success", null, Observation(x)));
+        Assert.AreEqual(288, CampaignAggregator.Aggregate(config, remaining.Concat(history), new Dictionary<string, string>()).RunCount);
+        var invalidSuccess = failed with { Status = "success", Failure = null, Observation = zero };
+        Assert.ThrowsException<InvalidDataException>(() => CampaignAggregator.Aggregate(config, remaining.Append(invalidSuccess), new Dictionary<string, string>()));
+    }
+
+    [DataTestMethod]
+    [DataRow(1)] [DataRow(2)]
+    public async Task ZeroCompletions_ThirdFailureStopsLaterKeysAndFutureResume(int qos)
+    {
+        using var temp = new CampaignTemp();
+        var keys = new CampaignDefinition().Expand().Where(x => x.Qos == qos).Take(2).ToArray();
+        using (var journal = CampaignJournal.Open(temp.Path, Identity(), false))
+            await Assert.ThrowsExceptionAsync<CampaignExhaustedException>(() => journal.ExecuteAsync(keys,
+                (key, path, number, ct) => Task.FromResult(ZeroCompletions(key))));
+        var history = CampaignJournal.ReadAttempts(temp.Path);
+        Assert.AreEqual(3, history.Count);
+        Assert.IsTrue(history.All(x => x.Key == keys[0] && x.Status == "failed"));
+        using var resumed = CampaignJournal.Open(temp.Path, Identity(), true);
+        await Assert.ThrowsExceptionAsync<CampaignExhaustedException>(() => resumed.ExecuteAsync(keys,
+            (key, path, number, ct) => Task.FromResult(Observation(key))));
+    }
+
+    [TestMethod]
+    public void Resume_RejectsHistoricallySealedSuccessWithoutQosCompletionLatency()
+    {
+        using var temp = new CampaignTemp();
+        var key = new CampaignDefinition().Expand().First(x => x.Qos == 1);
+        using (CampaignJournal.Open(temp.Path, Identity(), false)) { }
+        var directory = Path.Combine(temp.Path, "attempts", key.Key, "attempt-01");
+        CampaignJson.WriteNew(Path.Combine(directory, "started.json"), new AttemptResult(Identity(), key, 1, "started", null, null));
+        CampaignJson.WriteNew(Path.Combine(directory, "result.json"), new AttemptResult(Identity(), key, 1, "success", null, ZeroCompletions(key)));
+        CampaignJson.WriteNew(Path.Combine(directory, "sha256.json"), CampaignJson.HashTree(directory));
+        Assert.ThrowsException<InvalidDataException>(() => { using var journal = CampaignJournal.Open(temp.Path, Identity(), true); });
+    }
+
+    private static RunObservation ZeroCompletions(CampaignKey key) => Observation(key) with
+    {
+        Measurement = new MeasurementSummary(100, 0, 100, 0, 0, 0, 0, 0, 2, null, "unobserved",
+            new Dictionary<string, long> { ["transport"] = 100 })
+    };
 }
 
 internal sealed class CampaignTemp : IDisposable
 {
     public string Path { get; } = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "campaign-test-" + Guid.NewGuid().ToString("N"));
-    public void Dispose() { if (Directory.Exists(Path)) Directory.Delete(Path, true); }
+    public void Dispose()
+    {
+        if (!Directory.Exists(Path)) return;
+        // Git fixture object files can be read-only on Windows; every file here belongs to this fixture.
+        foreach (var file in Directory.EnumerateFiles(Path, "*", SearchOption.AllDirectories)) File.SetAttributes(file, FileAttributes.Normal);
+        Directory.Delete(Path, true);
+    }
 }

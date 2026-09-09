@@ -22,17 +22,23 @@ public sealed record PreflightReport(int SchemaVersion, CampaignIdentity Identit
 public sealed class StandSession : IAsyncDisposable
 {
     private readonly string script, selectedPath, output, docker;
-    private readonly List<FileStream> leases = new();
+    private readonly Dictionary<string, FileStream> leases = new(StringComparer.Ordinal);
     private bool started;
     public Uri Endpoint { get; }
     private StandSession(string script, string selectedPath, string output, string docker, Uri endpoint) =>
         (this.script, this.selectedPath, this.output, this.docker, Endpoint) = (script, selectedPath, output, docker, endpoint);
 
     public static async Task<StandSession> StartAsync(string script, string inventoryPath, CampaignDefinition config,
-        string broker, string output, string dockerExecutable = "docker", CancellationToken cancellationToken = default)
+        string broker, string output, string dockerExecutable = "docker", CancellationToken cancellationToken = default,
+        string? expectedStandSha256 = null)
     {
         config.Validate();
-        var inventory = JsonNode.Parse(File.ReadAllBytes(inventoryPath)) ?? throw new InvalidDataException("Missing stand inventory.");
+        var inputBytes = File.ReadAllBytes(inventoryPath);
+        if (expectedStandSha256 != null && CampaignJson.HashBytes(inputBytes) != expectedStandSha256)
+            throw new InvalidDataException("Stand input bytes do not match the campaign identity.");
+        // Parse and later persist exactly the buffer whose identity was verified. A source-file change
+        // after this read cannot change this deployment, and the next attempt must verify again.
+        var inventory = JsonNode.Parse(inputBytes) ?? throw new InvalidDataException("Missing stand inventory.");
         var brokers = inventory["brokers"]!.AsArray();
         var selected = brokers.Single(x => x!["name"]!.GetValue<string>() == broker)!;
         output = Path.GetFullPath(output);
@@ -42,20 +48,19 @@ public sealed class StandSession : IAsyncDisposable
         try
         {
             // A context lease spans preflight, measurement, capture and stop, also across different campaigns.
-            var contexts = brokers.Select(x => x!["dockerContext"]?.GetValue<string>() ?? inventory["dockerContext"]!.GetValue<string>())
-                .Distinct(StringComparer.Ordinal).OrderBy(x => x, StringComparer.Ordinal);
-            foreach (var context in contexts)
-            {
-                var id = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(context)));
-                session.leases.Add(new FileStream(Path.Combine(Path.GetTempPath(), "mqttbenchmark-stand-" + id + ".lock"),
-                    FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None));
-            }
+            session.LeaseContext(ControllerContext(inventory, selected));
             var sourcePath = Path.Combine(output, "inventory-check", "stand.source.json");
-            CampaignJson.WriteNew(sourcePath, inventory);
+            CampaignJson.WriteBytesNew(sourcePath, inputBytes);
             // Custom images need the controller's build record before validate. Registry images can be
             // validated and started at their immutable digest from cache, without contacting the registry.
             if (inventory["activeBroker"]?.GetValue<string>() is "Aedes" or "ActiveMQ")
+            {
+                // Source custom-image validation also builds/inspects that source's active context.
+                // Lease this used context too; unrelated broker entries never influence the leases.
+                var sourceActive = brokers.Single(x => x!["name"]!.GetValue<string>() == inventory["activeBroker"]!.GetValue<string>())!;
+                session.LeaseContext(ControllerContext(inventory, sourceActive));
                 await session.InvokeAsync("pull", sourcePath, Path.GetDirectoryName(sourcePath)!, 1, cancellationToken);
+            }
             await session.InvokeAsync("validate", sourcePath, Path.GetDirectoryName(sourcePath)!, 1, cancellationToken);
             inventory["campaign"] = new JsonObject { ["deploymentMode"] = config.DeploymentMode, ["cpuMode"] = config.CpuMode };
             inventory["activeBroker"] = broker;
@@ -74,6 +79,21 @@ public sealed class StandSession : IAsyncDisposable
             try { await session.DisposeAsync(); } catch { /* Original start/validation failure remains primary. */ }
             throw;
         }
+    }
+
+    private static string ControllerContext(JsonNode inventory, JsonNode selected)
+    {
+        var context = inventory["deploymentMode"]?.GetValue<string>() == "distributedHosts"
+            ? selected["dockerContext"]?.GetValue<string>() : inventory["dockerContext"]?.GetValue<string>();
+        return !string.IsNullOrWhiteSpace(context) ? context : throw new InvalidDataException("The controller's selected Docker context is required.");
+    }
+
+    private void LeaseContext(string context)
+    {
+        if (leases.ContainsKey(context)) return;
+        var id = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(context)));
+        leases.Add(context, new FileStream(Path.Combine(Path.GetTempPath(), "mqttbenchmark-stand-" + id + ".lock"),
+            FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None));
     }
 
     public async Task<TelemetryManifest> CaptureAsync(int seconds, CancellationToken cancellationToken = default)
@@ -121,6 +141,6 @@ public sealed class StandSession : IAsyncDisposable
                 await InvokeAsync("stop", selectedPath, output, 1, cancel.Token);
             }
         }
-        finally { foreach (var lease in leases) lease.Dispose(); leases.Clear(); }
+        finally { foreach (var lease in leases.Values) lease.Dispose(); leases.Clear(); }
     }
 }
