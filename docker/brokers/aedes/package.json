@@ -1,0 +1,8 @@
+{
+  "name": "mqttbenchmark-aedes",
+  "private": true,
+  "version": "1.0.0",
+  "dependencies": {
+    "aedes": "1.1.2"
+  }
+}

@@ -1,0 +1,58 @@
+{
+  "schemaVersion": "broker-stand.v1",
+  "deploymentMode": "singleHost",
+  "cpuMode": "singleCorePinned",
+  "activeBroker": "Aedes",
+  "dockerContext": "default",
+  "controlInterface": "127.0.0.1",
+  "brokers": [
+    {
+      "name": "Aedes",
+      "loaded": true,
+      "serviceName": "aedes",
+      "containerName": "aedes",
+      "mqttUri": "mqtt://127.0.0.1:1883",
+      "managementUri": null,
+      "image": "local/mqttbenchmark-aedes:1.1.2",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "cpuset": "0",
+      "memoryLimit": "512m"
+    },
+    {
+      "name": "Mosquitto",
+      "loaded": false,
+      "serviceName": "mosquitto",
+      "containerName": "mosquitto",
+      "mqttUri": "mqtt://127.0.0.1:2883",
+      "managementUri": null,
+      "image": "eclipse-mosquitto:2.1.2",
+      "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "cpuset": "0",
+      "memoryLimit": "512m"
+    },
+    {
+      "name": "ActiveMQ",
+      "loaded": false,
+      "serviceName": "activemq",
+      "containerName": "activemq",
+      "mqttUri": "mqtt://127.0.0.1:3883",
+      "managementUri": "http://127.0.0.1:8161",
+      "image": "apache/activemq-classic:6.3.2",
+      "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "cpuset": "0",
+      "memoryLimit": "512m"
+    },
+    {
+      "name": "EMQX",
+      "loaded": false,
+      "serviceName": "emqx",
+      "containerName": "emqx",
+      "mqttUri": "mqtt://127.0.0.1:4883",
+      "managementUri": "http://127.0.0.1:18083",
+      "image": "emqx/emqx:6.3.0",
+      "digest": "sha256:3b6d9c0c419930074b7e0e6cba07baceea584b2094d22f16ff02f6c075c3d5b8",
+      "cpuset": "0",
+      "memoryLimit": "512m"
+    }
+  ]
+}

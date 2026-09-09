@@ -17,4 +17,7 @@
   <ItemGroup>
     <Using Include="Microsoft.VisualStudio.TestTools.UnitTesting" />
   </ItemGroup>
+  <ItemGroup>
+    <None Include="..\..\scripts\BrokerStand.ps1" Link="BrokerStand.ps1" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>
