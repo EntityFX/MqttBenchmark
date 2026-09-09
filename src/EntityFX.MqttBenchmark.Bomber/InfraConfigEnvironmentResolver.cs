@@ -2,6 +2,8 @@ using System.Text.RegularExpressions;
 using System.Text.Json.Nodes;
 using System.Security.AccessControl;
 using System.Security.Principal;
+using System.Runtime.InteropServices;
+using System.ComponentModel;
 
 namespace EntityFX.MqttBenchmark.Bomber;
 
@@ -13,18 +15,42 @@ public static class InfraConfigEnvironmentResolver
     {
         var source = JsonNode.Parse(File.ReadAllText(sourcePath)) ?? throw new InvalidDataException("Infrastructure configuration is empty.");
         ResolveNode(source);
-        var destination = Path.GetTempFileName();
-        File.WriteAllText(destination, source.ToJsonString());
-        File.SetAttributes(destination, File.GetAttributes(destination) | FileAttributes.Temporary | FileAttributes.Hidden);
-        if (OperatingSystem.IsWindows())
+        var destination = Path.Combine(Path.GetTempPath(), "mqttbenchmark-infra-" + Guid.NewGuid().ToString("N") + ".json");
+        var created = false;
+        try
         {
-            var security = new FileSecurity();
-            security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
-            security.AddAccessRule(new FileSystemAccessRule(WindowsIdentity.GetCurrent().User!, FileSystemRights.FullControl, AccessControlType.Allow));
-            new FileInfo(destination).SetAccessControl(security);
+            using (var stream = CreatePrivateFile(destination))
+            {
+                created = true;
+                // Unix permissions are restricted while empty; Windows applies the ACL atomically at creation.
+                if (!OperatingSystem.IsWindows() && Chmod(destination, 0x180 /* 0600 */) != 0)
+                {
+                    throw new Win32Exception(Marshal.GetLastWin32Error(), "Cannot restrict runtime infrastructure file permissions.");
+                }
+                File.SetAttributes(destination, File.GetAttributes(destination) | FileAttributes.Temporary | FileAttributes.Hidden);
+                using var writer = new StreamWriter(stream);
+                writer.Write(source.ToJsonString());
+            }
+            return new InfraConfigLease(destination);
         }
-        return new InfraConfigLease(destination);
+        catch
+        {
+            if (created) File.Delete(destination);
+            throw;
+        }
     }
+
+    private static FileStream CreatePrivateFile(string destination)
+    {
+        if (!OperatingSystem.IsWindows()) return new FileStream(destination, FileMode.CreateNew, FileAccess.Write, FileShare.Read);
+        var security = new FileSecurity();
+        security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+        security.AddAccessRule(new FileSystemAccessRule(WindowsIdentity.GetCurrent().User!, FileSystemRights.FullControl, AccessControlType.Allow));
+        return new FileInfo(destination).Create(FileMode.CreateNew, FileSystemRights.FullControl, FileShare.Read, 4096, FileOptions.None, security);
+    }
+
+    [DllImport("libc", EntryPoint = "chmod", SetLastError = true)]
+    private static extern int Chmod(string pathname, int mode);
 
     private static void ResolveNode(JsonNode node)
     {

@@ -21,5 +21,6 @@
   <ItemGroup>
     <None Include="..\..\scripts\BrokerStand.ps1" Link="BrokerStand.ps1" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\docker\brokers\**\*" Link="docker\brokers\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="TestData\StrictDocker.ps1" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

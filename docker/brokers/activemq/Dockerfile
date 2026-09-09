@@ -10,5 +10,9 @@ RUN apk add --no-cache curl tar && \
     rm apache-activemq-${ACTIVEMQ_VERSION}-bin.tar.gz
 
 COPY activemq/activemq.xml /opt/activemq/conf/activemq.xml
+COPY activemq/jetty-http.xml /opt/activemq/conf/jetty/jetty-http.xml
+COPY activemq/log4j2.properties /opt/activemq/conf/log4j2.properties
+COPY activemq/logging.properties activemq/stand-setenv /opt/activemq/conf/
+RUN printf '\n. "$ACTIVEMQ_CONF/stand-setenv"\n' >> /opt/activemq/bin/setenv
 EXPOSE 1883 8161
 CMD ["/opt/activemq/bin/activemq", "console"]

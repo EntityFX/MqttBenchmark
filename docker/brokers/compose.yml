@@ -1,53 +1,36 @@
-name: mqttbenchmark-brokers
-
-x-broker-defaults: &broker-defaults
-  restart: unless-stopped
-  mem_limit: 4g
-  network_mode: host
-  labels:
-    mqttbenchmark.broker: "true"
-  logging:
-    driver: local
-    options:
-      max-size: 1m
-      max-file: "3"
-
-services:
-  aedes:
-    <<: *broker-defaults
-    profiles: [aedes]
-    build:
-      context: .
-      dockerfile: Dockerfile.aedes
-    image: ${AEDES_IMAGE:-local/mqttbenchmark-aedes:1.1.2-node20-alpine-build-inputs-sha256}
-    container_name: aedes
-
-  mosquitto:
-    <<: *broker-defaults
-    profiles: [mosquitto]
-    image: ${MOSQUITTO_IMAGE:-eclipse-mosquitto:2.1.2-alpine@sha256:6f8d8a947c506f8a2290ec65cd4bd2bc7cb4d43fb5f6271f861cb013e2ef9797}
-    container_name: mosquitto
-    volumes:
-      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
-    tmpfs: [/mosquitto/data]
-
-  activemq:
-    <<: *broker-defaults
-    profiles: [activemq]
-    build:
-      context: .
-      dockerfile: activemq/Dockerfile
-    image: ${ACTIVEMQ_IMAGE:-local/mqttbenchmark-activemq:6.3.2-build-inputs}
-    container_name: activemq
-    volumes:
-      - ./activemq/activemq.xml:/opt/activemq/conf/activemq.xml:ro
-    tmpfs: [/opt/activemq/data]
-
-  emqx:
-    <<: *broker-defaults
-    profiles: [emqx]
-    image: ${EMQX_IMAGE:-emqx/emqx:6.3.0@sha256:3b6d9c0c419930074b7e0e6cba07baceea584b2094d22f16ff02f6c075c3d5b8}
-    container_name: emqx
-    volumes:
-      - ./emqx/emqx.conf:/opt/emqx/etc/emqx.conf:ro
-    tmpfs: [/opt/emqx/data]
+{
+  "name": "mqttbenchmark-brokers",
+  "services": {
+    "aedes": {
+      "profiles": ["aedes"],
+      "build": { "context": ".", "dockerfile": "Dockerfile.aedes", "network": "host", "args": { "HTTP_PROXY": "${MQTTY_BUILD_HTTP_PROXY:-}", "HTTPS_PROXY": "${MQTTY_BUILD_HTTP_PROXY:-}", "NO_PROXY": "${MQTTY_BUILD_NO_PROXY:-localhost,127.0.0.1}" } },
+      "image": "local/mqttbenchmark-aedes:1.1.2-node20-alpine-build-inputs-sha256",
+      "container_name": "aedes", "network_mode": "host", "mem_limit": "4g", "restart": "unless-stopped",
+      "labels": { "mqttbenchmark.broker": "true" },
+      "logging": { "driver": "local", "options": { "max-size": "1m", "max-file": "3" } }
+    },
+    "mosquitto": {
+      "profiles": ["mosquitto"],
+      "image": "eclipse-mosquitto:2.1.2-alpine@sha256:6f8d8a947c506f8a2290ec65cd4bd2bc7cb4d43fb5f6271f861cb013e2ef9797",
+      "container_name": "mosquitto", "network_mode": "host", "mem_limit": "4g", "restart": "unless-stopped",
+      "labels": { "mqttbenchmark.broker": "true" },
+      "tmpfs": ["/mosquitto/data", "/mosquitto/log"],
+      "logging": { "driver": "local", "options": { "max-size": "1m", "max-file": "3" } }
+    },
+    "activemq": {
+      "profiles": ["activemq"],
+      "build": { "context": ".", "dockerfile": "activemq/Dockerfile", "network": "host", "args": { "HTTP_PROXY": "${MQTTY_BUILD_HTTP_PROXY:-}", "HTTPS_PROXY": "${MQTTY_BUILD_HTTP_PROXY:-}", "NO_PROXY": "${MQTTY_BUILD_NO_PROXY:-localhost,127.0.0.1}" } },
+      "image": "local/mqttbenchmark-activemq:6.3.2-build-inputs",
+      "container_name": "activemq", "network_mode": "host", "mem_limit": "4g", "restart": "unless-stopped",
+      "labels": { "mqttbenchmark.broker": "true" }, "tmpfs": ["/opt/activemq/data"],
+      "logging": { "driver": "local", "options": { "max-size": "1m", "max-file": "3" } }
+    },
+    "emqx": {
+      "profiles": ["emqx"],
+      "image": "emqx/emqx:6.3.0@sha256:3b6d9c0c419930074b7e0e6cba07baceea584b2094d22f16ff02f6c075c3d5b8",
+      "container_name": "emqx", "network_mode": "host", "mem_limit": "4g", "restart": "unless-stopped",
+      "labels": { "mqttbenchmark.broker": "true" }, "tmpfs": ["/opt/emqx/data:uid=1000,gid=1000", "/opt/emqx/log:uid=1000,gid=1000"],
+      "logging": { "driver": "local", "options": { "max-size": "1m", "max-file": "3" } }
+    }
+  }
+}

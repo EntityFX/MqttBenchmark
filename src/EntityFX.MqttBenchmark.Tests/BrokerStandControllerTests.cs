@@ -1,6 +1,8 @@
 using System.Diagnostics;
-using System.Text.Json;
-using EntityFX.MqttBenchmark.Bomber;
+using System.Net;
+using System.Net.Sockets;
+using System.Security.Cryptography;
+using System.Text.Json.Nodes;
 
 namespace EntityFX.MqttBenchmark.Tests;
 
@@ -8,321 +10,310 @@ namespace EntityFX.MqttBenchmark.Tests;
 public class BrokerStandControllerTests
 {
     [TestMethod]
-    public void InfraConfigResolver_ExpandsEnvironmentReferenceOrFailsWithoutEchoingValue()
+    public void Validate_RejectsInvalidIdentityEvenWithUnrelatedProvenance()
     {
-        const string variable = "MQTTBENCHMARK_TEST_TOKEN";
-        var directory = CreateTemporaryDirectory();
-        try
+        using var stand = new StandFixture("Mosquitto");
+        stand.Broker["digest"] = "sha256:invalid";
+        File.WriteAllText(Path.Combine(stand.Directory, "build-provenance.json"), "{\"broker\":\"Aedes\",\"imageId\":\"sha256:any\"}");
+        stand.Fails("start", "digest");
+        Assert.IsFalse(File.Exists(stand.CallsPath), "Invalid inventory must fail before Docker mutation.");
+    }
+
+    [TestMethod]
+    public void Validate_EnforcesTopologyExclusiveLoadAndCpuModes()
+    {
+        using var stand = new StandFixture("Mosquitto");
+        stand.Ok("validate");
+        stand.Inventory["campaign"] = JsonNode.Parse("{\"deploymentMode\":\"distributedHosts\",\"cpuMode\":\"singleCorePinned\"}");
+        stand.Fails("validate", "Campaign");
+        stand.Inventory.Remove("campaign");
+        stand.Broker["cpuset"] = "0-1";
+        stand.Fails("validate", "exactly one CPU");
+        stand.Broker["cpuset"] = "0";
+        stand.Inventory["brokers"]!.AsArray().Add(JsonNode.Parse(stand.Broker.ToJsonString()));
+        stand.Fails("validate", "active broker");
+    }
+
+    [DataTestMethod]
+    [DataRow("Aedes", "1.1.2", "node")]
+    [DataRow("ActiveMQ", "6.3.2", "java")]
+    public void CustomBuild_EntireLifecycleUsesRecordedImageAndInputHashes(string broker, string version, string runtime)
+    {
+        using var stand = new StandFixture(broker);
+        stand.Fails("start", "identity");
+        stand.Ok("pull");
+        stand.Ok("validate");
+        stand.Ok("start");
+        stand.Ok("health");
+        stand.Ok("capture", 3);
+        var provenance = stand.Json($"build/{broker.ToLowerInvariant()}.json");
+        Assert.AreEqual(StandFixture.ImageId, provenance["imageId"]!.GetValue<string>());
+        Assert.AreEqual(stand.Broker["image"]!.GetValue<string>(), provenance["image"]!.GetValue<string>());
+        Assert.IsTrue(provenance["buildInputs"]!.AsArray().Count >= 3);
+        foreach (var input in provenance["buildInputs"]!.AsArray())
+            Assert.AreEqual(HashFile(Path.Combine(stand.Directory, "docker", "brokers", input!["path"]!.GetValue<string>())), input["sha256"]!.GetValue<string>());
+        var versions = stand.Json("versions.json");
+        Assert.AreEqual(StandFixture.ImageId, versions["runningImageId"]!.GetValue<string>());
+        StringAssert.Contains(versions["brokerVersion"]!.GetValue<string>(), version);
+        StringAssert.Contains(versions["runtimeVersion"]!.GetValue<string>().ToLowerInvariant(), runtime);
+        var samples = File.ReadAllLines(Path.Combine(stand.Directory, "telemetry.ndjson")).Select(x => JsonNode.Parse(x)!).ToArray();
+        Assert.AreEqual(3, samples.Length);
+        Assert.AreEqual("container-cgroup", samples[0]["cpuScope"]!.GetValue<string>());
+        Assert.AreEqual("broker-processes", samples[0]["processRssScope"]!.GetValue<string>());
+        Assert.AreEqual("host-shared", samples[0]["networkScope"]!.GetValue<string>());
+        Assert.IsTrue(samples[0]["processRssBytes"]!.GetValue<long>() > 0);
+        Assert.AreEqual(2.0, samples[2]["monotonicSeconds"]!.GetValue<double>() - samples[0]["monotonicSeconds"]!.GetValue<double>());
+        Assert.IsTrue(DateTimeOffset.Parse(samples[2]["timestamp"]!.GetValue<string>()) > DateTimeOffset.Parse(samples[0]["timestamp"]!.GetValue<string>()));
+        Assert.IsTrue(stand.Json("config-hashes.json").AsArray().Any(x => x!["scope"]!.GetValue<string>() == "container-effective"));
+        stand.Ok("stop");
+        stand.Ok("reset");
+        var calls = File.ReadAllText(stand.CallsPath);
+        Assert.IsFalse(calls.Contains("@sha256:"), "Custom image IDs are not registry digests.");
+        Assert.AreEqual(1, File.ReadAllLines(stand.CallsPath).Count(line => line.Contains("MQTTBENCHMARK_TELEMETRY_V1")), "One in-container sampler avoids per-command cadence drift.");
+    }
+
+    [DataTestMethod]
+    [DataRow("Aedes")]
+    [DataRow("ActiveMQ")]
+    public void CustomBuild_RejectsChangedInputsWrongBrokerAndNonemptyDigest(string broker)
+    {
+        using var stand = new StandFixture(broker);
+        stand.Ok("pull");
+        var path = Path.Combine(stand.Directory, "build", broker.ToLowerInvariant() + ".json");
+        var original = File.ReadAllText(path);
+        var provenance = JsonNode.Parse(original)!;
+        provenance["broker"] = "unrelated";
+        File.WriteAllText(path, provenance.ToJsonString());
+        stand.Fails("start", "provenance");
+        File.WriteAllText(path, original);
+        var buildInput = broker == "Aedes" ? "aedes/server.js" : "activemq/Dockerfile";
+        File.AppendAllText(Path.Combine(stand.Directory, "docker/brokers", buildInput), "\n# changed\n");
+        stand.Fails("start", "build inputs");
+        stand.Broker["digest"] = StandFixture.ImageId;
+        stand.Fails("start", "digest");
+    }
+
+    [DataTestMethod]
+    [DataRow("Aedes")]
+    [DataRow("ActiveMQ")]
+    public void CustomBuild_SupportsOptionalProxyWithoutPersistingItsValue(string broker)
+    {
+        using var stand = new StandFixture(broker);
+        stand.Ok("pull");
+        var compose = stand.Json("build-compose.yml");
+        var build = compose["services"]![broker.ToLowerInvariant()]!["build"]!;
+        Assert.AreEqual("host", build["network"]?.GetValue<string>());
+        Assert.AreEqual("${MQTTY_BUILD_HTTP_PROXY:-}", build["args"]?["HTTP_PROXY"]?.GetValue<string>());
+        Assert.AreEqual("${MQTTY_BUILD_HTTP_PROXY:-}", build["args"]?["HTTPS_PROXY"]?.GetValue<string>());
+    }
+
+    [DataTestMethod]
+    [DataRow("Aedes")]
+    [DataRow("ActiveMQ")]
+    public void Cleanup_RemainsAvailableWhenBuildInputsHaveChanged(string broker)
+    {
+        using var stand = new StandFixture(broker);
+        stand.Ok("pull");
+        stand.Ok("start");
+        var input = broker == "Aedes" ? "aedes/server.js" : "activemq/Dockerfile";
+        File.AppendAllText(Path.Combine(stand.Directory, "docker/brokers", input), "\n# subsequent edit\n");
+        stand.Ok("stop");
+        stand.Ok("reset");
+    }
+
+    [DataTestMethod]
+    [DataRow("Mosquitto", "singleCorePinned", "singleHostSequential", 2883)]
+    [DataRow("EMQX", "hostAllCores", "distributedHosts", 1883)]
+    [DataRow("ActiveMQ", "singleCorePinned", "singleHostSequential", 3883)]
+    [DataRow("ActiveMQ", "hostAllCores", "distributedHosts", 1883)]
+    public void Start_TransfersEffectiveConfigurationWithoutHostBinds(string broker, string cpuMode, string deploymentMode, int mqttPort)
+    {
+        using var stand = new StandFixture(broker);
+        stand.Inventory["cpuMode"] = cpuMode;
+        stand.Inventory["deploymentMode"] = deploymentMode;
+        stand.Broker["cpuset"] = cpuMode == "hostAllCores" ? null : "0";
+        stand.Broker["dockerContext"] = "broker-context";
+        if (broker == "ActiveMQ") stand.Ok("pull");
+        stand.Ok("start");
+        var compose = stand.Json("effective-compose.yml");
+        Assert.AreEqual(1, compose["services"]!.AsObject().Count);
+        var service = compose["services"]![broker.ToLowerInvariant()]!;
+        Assert.AreEqual("host", service["network_mode"]!.GetValue<string>());
+        Assert.IsNull(service["ports"]);
+        Assert.IsNull(service["volumes"]);
+        Assert.AreEqual("4g", service["mem_limit"]!.GetValue<string>());
+        Assert.AreEqual(cpuMode == "hostAllCores" ? null : "0", service["cpuset"]?.GetValue<string>());
+        var manifest = stand.Json("run-provenance.json");
+        Assert.AreEqual(deploymentMode == "distributedHosts" ? "broker-context" : "stand-context", manifest["context"]!.GetValue<string>());
+        var configs = manifest["effectiveConfigs"]!.AsArray();
+        var primary = configs.Single(x => x!["containerPath"]!.GetValue<string>().EndsWith(broker == "ActiveMQ" ? "activemq.xml" : broker == "EMQX" ? "emqx.conf" : "mosquitto.conf"))!;
+        var content = File.ReadAllText(primary["path"]!.GetValue<string>());
+        StringAssert.Contains(content, mqttPort.ToString());
+        if (broker == "ActiveMQ")
         {
-            var configPath = Path.Combine(directory, "infra.json");
-            File.WriteAllText(configPath, "{ \"token\": \"${MQTTBENCHMARK_TEST_TOKEN}\", \"items\": [\"${MQTTBENCHMARK_TEST_TOKEN}\"] }");
-            Environment.SetEnvironmentVariable(variable, "quote-\\-line\nvalue");
-            string resolvedPath;
-            using (var lease = InfraConfigEnvironmentResolver.Resolve(configPath))
+            var setenv = configs.SingleOrDefault(x => x!["containerPath"]!.GetValue<string>().EndsWith("stand-setenv"));
+            Assert.IsNotNull(setenv, "Provide an effective override for the distribution's JVM management agent.");
+            StringAssert.Contains(File.ReadAllText(setenv!["path"]!.GetValue<string>()), "ACTIVEMQ_SUNJMX_START=\"\"");
+            StringAssert.Contains(content, $"mqtt://127.0.0.1:{mqttPort}");
+            StringAssert.Contains(content, "jetty-spring.xml");
+            var jetty = configs.Single(x => x!["containerPath"]!.GetValue<string>().EndsWith("jetty-http.xml"))!;
+            StringAssert.Contains(File.ReadAllText(jetty["path"]!.GetValue<string>()), "<Set name=\"host\">127.0.0.1</Set>");
+            var logging = configs.Single(x => x!["containerPath"]!.GetValue<string>().EndsWith("log4j2.properties"))!;
+            var logConfig = File.ReadAllText(logging["path"]!.GetValue<string>());
+            StringAssert.Contains(logConfig, "rootLogger.level=WARN");
+            Assert.IsFalse(logConfig.Contains("Rolling"));
+        }
+        if (broker == "Mosquitto")
+        {
+            StringAssert.Contains(content, "log_type warning");
+            StringAssert.Contains(content, "log_type error");
+        }
+        if (broker == "EMQX")
+        {
+            StringAssert.Contains(content, "log.file.enable = false");
+            Assert.IsTrue(content.Contains("dist_bind_address = \"127.0.0.1\""), "Erlang distribution must bind to the control address.");
+            Assert.IsTrue(content.Contains("rpc.listen_address = \"127.0.0.1\""), "RPC must bind to the control address.");
+        }
+    }
+
+    [TestMethod]
+    public void Capture_UsesStartSnapshotAndRejectsDriftInRunningContainer()
+    {
+        using var stand = new StandFixture("Mosquitto");
+        stand.Ok("start");
+        var effectivePath = Path.Combine(stand.Directory, "effective-compose.yml");
+        var before = HashFile(effectivePath);
+        File.AppendAllText(Path.Combine(stand.Directory, "docker/brokers/mosquitto/mosquitto.conf"), "\n# changed after start");
+        stand.Ok("capture", 2);
+        Assert.AreEqual(before, HashFile(effectivePath));
+        var configHash = stand.Json("config-hashes.json").AsArray().Single(x => x!["path"]!.GetValue<string>() == effectivePath)!;
+        Assert.AreEqual(before, configHash["sha256"]!.GetValue<string>());
+        File.WriteAllText(Path.Combine(stand.Directory, "config-drift"), "yes");
+        stand.Fails("capture", "configuration");
+    }
+
+    [DataTestMethod]
+    [DataRow("Aedes")]
+    [DataRow("Mosquitto")]
+    public void Capture_RejectsRunningImageThatNoLongerMatchesSelectedIdentity(string broker)
+    {
+        using var stand = new StandFixture(broker);
+        if (broker == "Aedes") stand.Ok("pull");
+        stand.Ok("start");
+        const string differentId = "sha256:1123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        if (broker == "Aedes")
+        {
+            var provenance = stand.Json("build/aedes.json");
+            provenance["imageId"] = differentId;
+            File.WriteAllText(Path.Combine(stand.Directory, "build/aedes.json"), provenance.ToJsonString());
+            File.WriteAllText(Path.Combine(stand.Directory, "tag-image-id"), differentId);
+        }
+        else stand.Broker["digest"] = differentId;
+        stand.Fails("capture", "Running container");
+    }
+
+    [TestMethod]
+    public void Health_RequiresSuccessfulMqttConnack()
+    {
+        using var stand = new StandFixture("Mosquitto");
+        stand.Ok("start");
+        stand.Ok("health");
+        stand.ConnackCode = 5;
+        stand.Fails("health", "CONNACK");
+    }
+
+    private static string HashFile(string path) => Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path))).ToLowerInvariant();
+
+    private sealed class StandFixture : IDisposable
+    {
+        public const string ImageId = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        public string Directory { get; } = Path.Combine(Path.GetTempPath(), "mqttstand-test-" + Guid.NewGuid().ToString("N"));
+        public string CallsPath => Path.Combine(Directory, "docker-calls.ndjson");
+        public JsonObject Inventory { get; }
+        public JsonObject Broker => Inventory["brokers"]![0]!.AsObject();
+        public byte ConnackCode { get; set; }
+        private readonly TcpListener listener = new(IPAddress.Loopback, 0);
+        private readonly Task acceptLoop;
+
+        public StandFixture(string name)
+        {
+            System.IO.Directory.CreateDirectory(Directory);
+            CopyTree(Path.Combine(AppContext.BaseDirectory, "docker"), Path.Combine(Directory, "docker"));
+            File.Copy(Path.Combine(AppContext.BaseDirectory, "BrokerStand.ps1"), Path.Combine(Directory, "BrokerStand.ps1"));
+            listener.Start();
+            acceptLoop = Task.Run(async () =>
             {
-                resolvedPath = lease.Path;
-                var json = JsonDocument.Parse(File.ReadAllText(resolvedPath));
-                Assert.AreEqual("quote-\\-line\nvalue", json.RootElement.GetProperty("token").GetString());
-                Assert.AreEqual("quote-\\-line\nvalue", json.RootElement.GetProperty("items")[0].GetString());
-            }
-            Assert.IsFalse(File.Exists(resolvedPath));
-
-            Environment.SetEnvironmentVariable(variable, null);
-            var exception = Assert.ThrowsException<InvalidDataException>(() =>
-                InfraConfigEnvironmentResolver.Resolve(configPath));
-            StringAssert.Contains(exception.Message, variable);
-            Assert.IsFalse(exception.Message.Contains("test-only-value"));
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable(variable, null);
-            Directory.Delete(directory, recursive: true);
-        }
-    }
-    [TestMethod]
-    public void Validate_AcceptsACompleteSingleHostInventory()
-    {
-        var directory = CreateTemporaryDirectory();
-        try
-        {
-            var configPath = Path.Combine(directory, "stand.json");
-            File.WriteAllText(configPath, "{\n" +
-                "  \"schemaVersion\": \"broker-stand.v1\",\n" +
-                "  \"deploymentMode\": \"singleHostSequential\",\n" +
-                "  \"cpuMode\": \"singleCorePinned\",\n" +
-                "  \"activeBroker\": \"Aedes\",\n" +
-                "  \"dockerContext\": \"default\",\n" +
-                "  \"brokers\": [{\n" +
-                "    \"name\": \"Aedes\", \"loaded\": true,\n" +
-                "    \"mqttUri\": \"mqtt://127.0.0.1:1883\", \"managementUri\": null,\n" +
-                "    \"image\": \"local/aedes:1.1.2\",\n" +
-                "    \"digest\": \"sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\", \"digestProvenance\": { \"status\": \"verified\" },\n" +
-                "    \"cpuset\": \"0\", \"memoryLimit\": 4294967296\n" +
-                "  }]\n" +
-                "}\n");
-
-            var result = RunController("validate", configPath, directory);
-
-            Assert.AreEqual(0, result.ExitCode, result.StandardError);
-            using var json = JsonDocument.Parse(result.StandardOutput);
-            Assert.AreEqual("valid", json.RootElement.GetProperty("status").GetString());
-            Assert.AreEqual("validate", json.RootElement.GetProperty("action").GetString());
-        }
-        finally
-        {
-            Directory.Delete(directory, recursive: true);
-        }
-    }
-
-    [TestMethod]
-    public void Validate_RejectsCampaignWithIncompatibleDeploymentOrCpuMode()
-    {
-        var directory = CreateTemporaryDirectory();
-        try
-        {
-            var configPath = Path.Combine(directory, "stand.json");
-            File.WriteAllText(configPath, InventoryJson(
-                "\"campaign\": { \"deploymentMode\": \"distributedHosts\", \"cpuMode\": \"hostAllCores\" }"));
-
-            var result = RunController("validate", configPath, directory);
-
-            Assert.AreNotEqual(0, result.ExitCode);
-            StringAssert.Contains(result.StandardError, "Campaign deployment mode");
-        }
-        finally
-        {
-            Directory.Delete(directory, recursive: true);
-        }
-    }
-
-    [TestMethod]
-    public void Validate_RejectsUnsupportedSchemaAndUnpinnedDigest()
-    {
-        var directory = CreateTemporaryDirectory();
-        try
-        {
-            var configPath = Path.Combine(directory, "stand.json");
-            File.WriteAllText(configPath, InventoryJson().Replace("broker-stand.v1", "broker-stand.v0"));
-            var schemaResult = RunController("validate", configPath, directory);
-            Assert.AreNotEqual(0, schemaResult.ExitCode);
-            StringAssert.Contains(schemaResult.StandardError, "schema version");
-
-            File.WriteAllText(configPath, InventoryJson().Replace("sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789", "not-a-digest"));
-            var digestResult = RunController("validate", configPath, directory);
-            Assert.AreNotEqual(0, digestResult.ExitCode);
-            StringAssert.Contains(digestResult.StandardError, "unresolved image identity");
-        }
-        finally
-        {
-            Directory.Delete(directory, recursive: true);
-        }
-    }
-
-    [TestMethod]
-    public void Validate_RejectsMultipleLoadedBrokersAndMultiCpuPin()
-    {
-        var directory = CreateTemporaryDirectory();
-        try
-        {
-            var configPath = Path.Combine(directory, "stand.json");
-            File.WriteAllText(configPath, TwoLoadedInventoryJson());
-            var loadedResult = RunController("validate", configPath, directory);
-            Assert.AreNotEqual(0, loadedResult.ExitCode);
-            StringAssert.Contains(loadedResult.StandardError, "active broker must be loaded");
-
-            File.WriteAllText(configPath, InventoryJson().Replace("\"cpuset\": \"0\"", "\"cpuset\": \"0-1\""));
-            var cpuResult = RunController("validate", configPath, directory);
-            Assert.AreNotEqual(0, cpuResult.ExitCode);
-            StringAssert.Contains(cpuResult.StandardError, "pin exactly one CPU");
-        }
-        finally
-        {
-            Directory.Delete(directory, recursive: true);
-        }
-    }
-
-    [TestMethod]
-    public void Capture_WritesVersionTelemetryLogAndConfigHashFromControlledDocker()
-    {
-        var directory = CreateTemporaryDirectory();
-        try
-        {
-            var configPath = Path.Combine(directory, "stand.json");
-            File.WriteAllText(configPath, InventoryJson());
-            var dockerPath = CreateControlledDocker(directory);
-
-            var result = RunController("capture", configPath, directory, dockerPath);
-
-            Assert.AreEqual(0, result.ExitCode, result.StandardError);
-            Assert.IsTrue(File.Exists(Path.Combine(directory, "versions.json")));
-            Assert.IsTrue(File.Exists(Path.Combine(directory, "telemetry.ndjson")));
-            Assert.IsTrue(File.Exists(Path.Combine(directory, "logs", "Aedes.log")));
-            Assert.IsTrue(File.Exists(Path.Combine(directory, "config-hashes.json")));
-            var telemetry = File.ReadAllText(Path.Combine(directory, "telemetry.ndjson"));
-            Assert.IsTrue(telemetry.Contains("timestamp"));
-            Assert.IsTrue(telemetry.Contains("cgroupCpuAndThrottle"));
-            Assert.IsTrue(telemetry.Contains("cgroupMemoryCurrentBytes"));
-            Assert.IsTrue(telemetry.Contains("host-shared"));
-            Assert.IsTrue(File.ReadAllText(Path.Combine(directory, "versions.json")).Contains("requestedImage"));
-        }
-        finally
-        {
-            Directory.Delete(directory, recursive: true);
-        }
-    }
-
-    [TestMethod]
-    public void Reset_RemovesOnlyTheLoadedBroker()
-    {
-        var directory = CreateTemporaryDirectory();
-        try
-        {
-            var configPath = Path.Combine(directory, "stand.json");
-            File.WriteAllText(configPath, InventoryJson());
-            var dockerPath = CreateControlledDocker(directory);
-
-            var result = RunController("reset", configPath, directory, dockerPath);
-
-            Assert.AreEqual(0, result.ExitCode, result.StandardError);
-            var calls = File.ReadAllText(Path.Combine(directory, "docker.log"));
-            StringAssert.Contains(calls, "rm -f aedes");
-            Assert.IsFalse(calls.Contains("mosquitto"));
-        }
-        finally
-        {
-            Directory.Delete(directory, recursive: true);
-        }
-    }
-
-    [TestMethod]
-    public void RemainingControllerActionsInvokeOnlyTheActiveBroker()
-    {
-        var directory = CreateTemporaryDirectory();
-        try
-        {
-            var configPath = Path.Combine(directory, "stand.json");
-            File.WriteAllText(configPath, InventoryJson());
-            var dockerPath = CreateControlledDocker(directory, "running");
-
-            foreach (var action in new[] { "pull", "start", "health", "stop" })
+                try
+                {
+                    while (true)
+                    {
+                        using var client = await listener.AcceptTcpClientAsync();
+                        var buffer = new byte[64];
+                        await client.GetStream().ReadAsync(buffer);
+                        await client.GetStream().WriteAsync(new byte[] { 0x20, 2, 0, ConnackCode });
+                    }
+                }
+                catch (SocketException) { }
+                catch (ObjectDisposedException) { }
+            });
+            var service = name.ToLowerInvariant();
+            Inventory = new JsonObject
             {
-                var result = RunController(action, configPath, directory, dockerPath);
-                Assert.AreEqual(0, result.ExitCode, $"{action}: {result.StandardError}");
-            }
-
-            var calls = File.ReadAllText(Path.Combine(directory, "docker.log"));
-            StringAssert.Contains(calls, "compose -f");
-            StringAssert.Contains(calls, "build aedes");
-            StringAssert.Contains(calls, "compose -f");
-            StringAssert.Contains(calls, "inspect --format");
-            StringAssert.Contains(calls, "stop aedes");
-            StringAssert.Contains(calls, "rm -f mosquitto");
-            var effectiveOverride = File.ReadAllText(Path.Combine(directory, "effective-compose.yml"));
-            StringAssert.Contains(effectiveOverride, "network_mode: host");
-            StringAssert.Contains(effectiveOverride, "MQTT_PORT=1883");
-            Assert.IsFalse(effectiveOverride.Contains("ports:"));
+                ["schemaVersion"] = "broker-stand.v1", ["deploymentMode"] = "singleHostSequential",
+                ["cpuMode"] = "singleCorePinned", ["activeBroker"] = name, ["dockerContext"] = "stand-context",
+                ["controlInterface"] = "127.0.0.1", ["networkMode"] = "host",
+                ["brokers"] = new JsonArray(new JsonObject
+                {
+                    ["name"] = name, ["loaded"] = true, ["serviceName"] = service, ["containerName"] = service,
+                    ["mqttUri"] = $"mqtt://127.0.0.1:{((IPEndPoint)listener.LocalEndpoint).Port}",
+                    ["singleHostMqttPort"] = name switch { "Aedes" => 1883, "Mosquitto" => 2883, "ActiveMQ" => 3883, _ => 4883 },
+                    ["distributedMqttPort"] = 1883, ["managementUri"] = name == "ActiveMQ" ? "http://127.0.0.1:8161" : name == "EMQX" ? "http://127.0.0.1:18083" : null,
+                    ["image"] = "test/" + service + ":pinned", ["digest"] = name is "Aedes" or "ActiveMQ" ? null : ImageId,
+                    ["digestProvenance"] = new JsonObject { ["status"] = name is "Aedes" or "ActiveMQ" ? "unresolved" : "verified" },
+                    ["cpuset"] = "0", ["memoryLimit"] = 4294967296L
+                })
+            };
+            File.Copy(Path.Combine(AppContext.BaseDirectory, "TestData/StrictDocker.ps1"), Path.Combine(Directory, "docker.ps1"));
+            Save();
         }
-        finally
+
+        public void Save() => File.WriteAllText(Path.Combine(Directory, "stand.json"), Inventory.ToJsonString());
+        public JsonNode Json(string path) => JsonNode.Parse(File.ReadAllText(Path.Combine(Directory, path)))!;
+        public void Ok(string action, int seconds = 1)
         {
-            Directory.Delete(directory, recursive: true);
+            var result = Run(action, seconds);
+            Assert.AreEqual(0, result.code, action + ": " + result.error + result.output);
+        }
+        public void Fails(string action, string message)
+        {
+            var result = Run(action, 1);
+            Assert.AreNotEqual(0, result.code, action + " unexpectedly succeeded.");
+            StringAssert.Contains(result.error, message);
+        }
+        private (int code, string output, string error) Run(string action, int seconds)
+        {
+            Save();
+            var info = new ProcessStartInfo("pwsh") { UseShellExecute = false, RedirectStandardError = true, RedirectStandardOutput = true };
+            foreach (var arg in new[] { "-NoProfile", "-File", Path.Combine(Directory, "BrokerStand.ps1"), "-Action", action,
+                "-ConfigPath", Path.Combine(Directory, "stand.json"), "-OutputDirectory", Directory,
+                "-DockerExecutable", Path.Combine(Directory, "docker.ps1"), "-CaptureSeconds", seconds.ToString() }) info.ArgumentList.Add(arg);
+            using var process = Process.Start(info)!;
+            var output = process.StandardOutput.ReadToEndAsync();
+            var error = process.StandardError.ReadToEndAsync();
+            Assert.IsTrue(process.WaitForExit(45000), "Controller timed out.");
+            return (process.ExitCode, output.Result, error.Result);
+        }
+        public void Dispose()
+        {
+            listener.Stop();
+            acceptLoop.GetAwaiter().GetResult();
+            System.IO.Directory.Delete(Directory, true);
+        }
+        private static void CopyTree(string from, string to)
+        {
+            System.IO.Directory.CreateDirectory(to);
+            foreach (var file in System.IO.Directory.GetFiles(from)) File.Copy(file, Path.Combine(to, Path.GetFileName(file)));
+            foreach (var dir in System.IO.Directory.GetDirectories(from)) CopyTree(dir, Path.Combine(to, Path.GetFileName(dir)));
         }
     }
-
-    [TestMethod]
-    public void Health_RejectsARunningContainerWhoseMqttEndpointIsUnavailable()
-    {
-        var directory = CreateTemporaryDirectory();
-        try
-        {
-            var configPath = Path.Combine(directory, "stand.json");
-            File.WriteAllText(configPath, InventoryJson().Replace("127.0.0.1:1883", "127.0.0.1:65501"));
-            var dockerPath = CreateControlledDocker(directory, "running");
-
-            var result = RunController("health", configPath, directory, dockerPath);
-
-            Assert.AreNotEqual(0, result.ExitCode);
-            StringAssert.Contains(result.StandardError, "MQTT readiness");
-        }
-        finally
-        {
-            Directory.Delete(directory, recursive: true);
-        }
-    }
-
-    private static (int ExitCode, string StandardOutput, string StandardError) RunController(
-        string action, string configPath, string outputDirectory, string? dockerExecutable = null)
-    {
-        var scriptPath = Path.Combine(AppContext.BaseDirectory, "BrokerStand.ps1");
-        using var process = Process.Start(new ProcessStartInfo
-        {
-            FileName = "pwsh",
-            Arguments = $"-NoProfile -File \"{scriptPath}\" -Action {action} -ConfigPath \"{configPath}\" -OutputDirectory \"{outputDirectory}\"" +
-                (dockerExecutable is null ? string.Empty : $" -DockerExecutable \"{dockerExecutable}\""),
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false
-        })!;
-        var output = process.StandardOutput.ReadToEnd();
-        var error = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        return (process.ExitCode, output, error);
-    }
-
-    private static string CreateTemporaryDirectory()
-    {
-        var directory = Path.Combine(Path.GetTempPath(), $"mqttbenchmark-brokerstand-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(directory);
-        return directory;
-    }
-
-    private static string CreateControlledDocker(string directory, string response = "controlled-docker")
-    {
-        var dockerPath = Path.Combine(directory, "controlled-docker.ps1");
-        File.WriteAllText(dockerPath, "param([Parameter(ValueFromRemainingArguments = $true)][string[]]$DockerArguments)\n" +
-            "$joined = $DockerArguments -join ' '\n" +
-            "Add-Content -LiteralPath (Join-Path $PSScriptRoot 'docker.log') -Value $joined\n" +
-            "if ($joined -match ' version ') { '{\"Server\":{\"Version\":\"29.2.1\"}}'; exit 0 }\n" +
-            "if ($joined -match 'image inspect') { '{\"Id\":\"sha256:abcdef\"}'; exit 0 }\n" +
-            "if ($joined -match ' stats ') { '{\"CPUPerc\":\"1.00%\",\"MemUsage\":\"100MiB / 4GiB\",\"NetIO\":\"1kB / 2kB\",\"BlockIO\":\"3kB / 4kB\"}'; exit 0 }\n" +
-            "if ($joined -match 'cpu.stat') { 'usage_usec 1`nnr_throttled 2'; exit 0 }\n" +
-            "if ($joined -match 'memory.current') { '104857600'; exit 0 }\n" +
-            "if ($joined -match 'VmRSS') { 'VmRSS: 102400 kB'; exit 0 }\n" +
-            "if ($joined -match 'ps -a') { 'mosquitto`naedes'; exit 0 }\n" +
-            "if ($joined -match 'inspect') { 'running'; exit 0 }\n" +
-            "if ($joined -match ' logs ') { '2026-09-09T00:00:00Z ready'; exit 0 }\n" +
-            $"if ($joined -match ' compose | pull | build | rm | stop |/proc/net/dev|io.stat|ss -tan') {{ '{response}'; exit 0 }}\n" +
-            "throw \"unsupported docker command: $joined\"\n");
-        return dockerPath;
-    }
-
-    private static string InventoryJson(string? additionalRootProperty = null) => "{\n" +
-        "  \"schemaVersion\": \"broker-stand.v1\",\n" +
-        "  \"deploymentMode\": \"singleHostSequential\",\n" +
-        "  \"cpuMode\": \"singleCorePinned\",\n" +
-        "  \"activeBroker\": \"Aedes\",\n" +
-        "  \"dockerContext\": \"default\",\n" +
-        "  \"controlInterface\": \"127.0.0.1\",\n" +
-        "  \"networkMode\": \"host\",\n" +
-        (additionalRootProperty is null ? string.Empty : $"  {additionalRootProperty},\n") +
-        "  \"brokers\": [{\n" +
-        "    \"name\": \"Aedes\", \"loaded\": true,\n" +
-        "    \"serviceName\": \"aedes\", \"containerName\": \"aedes\",\n" +
-        "    \"mqttUri\": \"mqtt://127.0.0.1:1883\", \"singleHostMqttPort\": 1883, \"distributedMqttPort\": 1883, \"managementUri\": null,\n" +
-        "    \"image\": \"local/aedes:1.1.2\",\n" +
-        "    \"digest\": \"sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\", \"digestProvenance\": { \"status\": \"verified\" },\n" +
-        "    \"cpuset\": \"0\", \"memoryLimit\": 4294967296\n" +
-        "  }]\n" +
-        "}\n";
-
-    private static string TwoLoadedInventoryJson() => "{\n" +
-        "  \"schemaVersion\": \"broker-stand.v1\",\n" +
-        "  \"deploymentMode\": \"singleHostSequential\",\n" +
-        "  \"cpuMode\": \"singleCorePinned\",\n" +
-        "  \"activeBroker\": \"Aedes\",\n" +
-        "  \"dockerContext\": \"default\",\n" +
-        "  \"brokers\": [\n" +
-        "    { \"name\": \"Aedes\", \"loaded\": true, \"mqttUri\": \"mqtt://127.0.0.1:1883\", \"image\": \"local/aedes:1.1.2\", \"digest\": \"sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\", \"digestProvenance\": { \"status\": \"verified\" }, \"cpuset\": \"0\", \"memoryLimit\": 4294967296 },\n" +
-        "    { \"name\": \"Mosquitto\", \"loaded\": true, \"mqttUri\": \"mqtt://127.0.0.1:2883\", \"image\": \"local/mosquitto:2.1.2\", \"digest\": \"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\", \"digestProvenance\": { \"status\": \"verified\" }, \"cpuset\": \"0\", \"memoryLimit\": 4294967296 }\n" +
-        "  ]\n" +
-        "}\n";
 }

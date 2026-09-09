@@ -1,0 +1,13 @@
+**
+!Dockerfile.aedes
+!aedes
+!aedes/package.json
+!aedes/package-lock.json
+!aedes/server.js
+!activemq
+!activemq/Dockerfile
+!activemq/activemq.xml
+!activemq/jetty-http.xml
+!activemq/log4j2.properties
+!activemq/logging.properties
+!activemq/stand-setenv

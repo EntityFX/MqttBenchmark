@@ -2,8 +2,9 @@ FROM node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb836
 
 WORKDIR /app
 COPY aedes/package.json aedes/package-lock.json ./
-RUN npm ci --omit=dev
-COPY aedes/server.js ./server.js
+RUN npm ci --omit=dev --no-audit --no-fund --fetch-retries=1 --fetch-timeout=30000 && \
+    node -e "if (typeof require('aedes').Aedes.createBroker !== 'function' || JSON.parse(require('fs').readFileSync('node_modules/aedes/package.json')).version !== '1.1.2') process.exit(1)"
+COPY --chown=node:node aedes/server.js ./server.js
 
 USER node
 EXPOSE 1883

@@ -1,0 +1,5 @@
+# Loaded after the distribution defaults; local Broker JMX remains available to the web console.
+ACTIVEMQ_SUNJMX_START=""
+ACTIVEMQ_TMP="$ACTIVEMQ_DATA/tmp"
+mkdir -p "$ACTIVEMQ_TMP"
+ACTIVEMQ_OPTS="$ACTIVEMQ_OPTS -Djava.util.logging.config.file=$ACTIVEMQ_CONF/logging.properties"

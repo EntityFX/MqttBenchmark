@@ -11,7 +11,9 @@ async function main() {
     server.listen(port, '0.0.0.0', resolve);
   });
 
-  console.log(JSON.stringify({ event: 'ready', broker: 'aedes', port }));
+  // Routine connections and readiness are silent, matching the stand's warning/error policy.
+  broker.on('clientError', (_client, error) => console.warn(error.message));
+  server.on('error', error => console.error(error.message));
   const shutdown = () => server.close(() => broker.close(() => process.exit(0)));
   process.once('SIGTERM', shutdown);
   process.once('SIGINT', shutdown);
