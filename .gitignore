@@ -17,4 +17,5 @@ Version.h
 Version.cpp
 */bin/*
 */obj/*
+.superpowers/
 *.v2
