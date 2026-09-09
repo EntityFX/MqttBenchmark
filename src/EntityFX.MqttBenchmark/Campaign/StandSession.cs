@@ -52,15 +52,17 @@ public sealed class StandSession : IAsyncDisposable
             }
             var sourcePath = Path.Combine(output, "inventory-check", "stand.source.json");
             CampaignJson.WriteNew(sourcePath, inventory);
-            // pull validates the unmodified source topology before any Docker operation, and establishes
-            // build provenance required by validate for a custom active broker. Selection happens afterward.
-            await session.InvokeAsync("pull", sourcePath, Path.GetDirectoryName(sourcePath)!, 1, cancellationToken);
+            // Custom images need the controller's build record before validate. Registry images can be
+            // validated and started at their immutable digest from cache, without contacting the registry.
+            if (inventory["activeBroker"]?.GetValue<string>() is "Aedes" or "ActiveMQ")
+                await session.InvokeAsync("pull", sourcePath, Path.GetDirectoryName(sourcePath)!, 1, cancellationToken);
             await session.InvokeAsync("validate", sourcePath, Path.GetDirectoryName(sourcePath)!, 1, cancellationToken);
             inventory["campaign"] = new JsonObject { ["deploymentMode"] = config.DeploymentMode, ["cpuMode"] = config.CpuMode };
             inventory["activeBroker"] = broker;
             foreach (var item in brokers) item!["loaded"] = item["name"]!.GetValue<string>() == broker;
             CampaignJson.WriteNew(selectedPath, inventory);
-            await session.InvokeAsync("pull", selectedPath, output, 1, cancellationToken);
+            if (broker is "Aedes" or "ActiveMQ")
+                await session.InvokeAsync("pull", selectedPath, output, 1, cancellationToken);
             await session.InvokeAsync("validate", selectedPath, output, 1, cancellationToken);
             session.started = true;
             await session.InvokeAsync("start", selectedPath, output, 1, cancellationToken);

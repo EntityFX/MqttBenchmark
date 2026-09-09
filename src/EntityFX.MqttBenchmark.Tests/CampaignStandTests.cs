@@ -72,6 +72,21 @@ public class CampaignStandTests
         });
         Assert.IsFalse(File.Exists(System.IO.Path.Combine(fixture.Path, "docker-calls.ndjson")));
     }
+
+    [TestMethod]
+    public async Task StandAdapter_StartsCachedImmutableRegistryImageWhenRegistryIsOffline()
+    {
+        await using var broker = await LocalBroker.StartAsync();
+        using var fixture = new CampaignStandFixture(broker.Uri);
+        var docker = File.ReadAllText(fixture.Docker).Replace("$joined = $a -join ' '",
+            "$joined = $a -join ' '\nif ($a[0] -eq 'pull') { throw 'Registry is offline; the pinned image is already cached.' }");
+        File.WriteAllText(fixture.Docker, docker);
+        await using var session = await StandSession.StartAsync(fixture.Script, fixture.InventoryPath,
+            new CampaignDefinition(), "Mosquitto", fixture.Output, fixture.Docker);
+        var telemetry = await session.CaptureAsync(1);
+        Assert.AreEqual(1, telemetry.SampleCount);
+        Assert.IsTrue(telemetry.InputSha256.ContainsKey("run-provenance.json"));
+    }
 }
 
 internal sealed class CampaignStandFixture : IDisposable
