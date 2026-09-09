@@ -101,7 +101,7 @@ public sealed class StandSession : IAsyncDisposable
         CancellationToken cancellationToken = default)
     {
         using var captureCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var capture = CaptureAsync(seconds, captureCancellation.Token);
+        var capture = CaptureSamplesAsync(seconds, captureCancellation.Token);
         try
         {
             var startup = Stopwatch.StartNew();
@@ -112,10 +112,26 @@ public sealed class StandSession : IAsyncDisposable
                 await Task.Delay(25, cancellationToken);
             }
             if (capture.IsCompleted) { await capture; throw new InvalidDataException("Telemetry ended before measurement started."); }
+            RequireActiveSampler();
+            cancellationToken.ThrowIfCancellationRequested();
             CampaignJson.WriteNew(Path.Combine(output, "measurement-started.json"), new { startedAtUtc = DateTimeOffset.UtcNow });
             await measurement(cancellationToken);
-            if (capture.IsCompleted) { await capture; throw new InvalidDataException("Telemetry ended before measurement completed."); }
-            return await capture;
+            RequireActiveSampler();
+            // Read the same remote monotonic clock only after all workload phases have finished.
+            // A later sample proves end coverage even if the final sampler output was delayed in transit.
+            await InvokeAsync("fence", selectedPath, output, 1, cancellationToken);
+            var sampleCount = await capture;
+            var fence = JsonNode.Parse(File.ReadAllText(Path.Combine(output, "workload-end-fence.json")))!;
+            var end = JsonNode.Parse(File.ReadAllText(Path.Combine(output, "sampler-ended.json")))!;
+            var ready = JsonNode.Parse(File.ReadAllText(Path.Combine(output, "telemetry-ready.json")))!;
+            var endTime = end["lastSampleMonotonicSeconds"]!.GetValue<double>();
+            var fenceTime = fence["monotonicSeconds"]!.GetValue<double>();
+            if (!double.IsFinite(endTime) || !double.IsFinite(fenceTime) || endTime <= fenceTime ||
+                end["containerId"]!.GetValue<string>() != fence["containerId"]!.GetValue<string>() ||
+                ready["containerId"]!.GetValue<string>() != fence["containerId"]!.GetValue<string>())
+                throw new InvalidDataException("Telemetry does not cover the remote workload completion fence.");
+            // Fence and capture writers are both finished before hashing their immutable evidence.
+            return WriteTelemetryManifest(sampleCount);
         }
         catch
         {
@@ -125,14 +141,28 @@ public sealed class StandSession : IAsyncDisposable
         }
     }
 
-    public async Task<TelemetryManifest> CaptureAsync(int seconds, CancellationToken cancellationToken = default)
+    private void RequireActiveSampler()
+    {
+        if (File.Exists(Path.Combine(output, "sampler-ended.json")))
+            throw new InvalidDataException("Telemetry sampler ended outside the required workload coverage.");
+    }
+
+    public async Task<TelemetryManifest> CaptureAsync(int seconds, CancellationToken cancellationToken = default) =>
+        WriteTelemetryManifest(await CaptureSamplesAsync(seconds, cancellationToken));
+
+    private async Task<int> CaptureSamplesAsync(int seconds, CancellationToken cancellationToken)
     {
         await InvokeAsync("capture", selectedPath, output, seconds, cancellationToken);
         var samples = File.ReadAllLines(Path.Combine(output, "telemetry.ndjson")).Where(x => !string.IsNullOrWhiteSpace(x))
             .Select(x => JsonNode.Parse(x)!).ToArray();
         if (samples.Length < seconds || samples.Any(x => x["cpuScope"]!.GetValue<string>() != "container-cgroup" ||
             x["networkScope"]!.GetValue<string>() != "host-shared")) throw new InvalidDataException("Telemetry capture is incomplete or has unexpected scopes.");
-        var manifest = new TelemetryManifest(samples.Length, "container-cgroup", "host-shared", CampaignJson.HashTree(output));
+        return samples.Length;
+    }
+
+    private TelemetryManifest WriteTelemetryManifest(int sampleCount)
+    {
+        var manifest = new TelemetryManifest(sampleCount, "container-cgroup", "host-shared", CampaignJson.HashTree(output));
         CampaignJson.WriteNew(Path.Combine(output, "telemetry-manifest.json"), manifest);
         return manifest;
     }

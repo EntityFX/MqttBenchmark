@@ -56,17 +56,71 @@ public class CampaignStandTests
         Func<CancellationToken, Task> measurement = _ =>
         {
             Assert.IsTrue(File.Exists(System.IO.Path.Combine(fixture.Output, "telemetry-ready.json")));
+            Assert.IsFalse(File.Exists(System.IO.Path.Combine(fixture.Output, "sampler-ended.json")), "Sampling must still be active.");
             Assert.IsFalse(File.Exists(System.IO.Path.Combine(fixture.Output, "telemetry-manifest.json")), "Capture must still be active.");
             var first = JsonNode.Parse(File.ReadLines(System.IO.Path.Combine(fixture.Output, "telemetry.ndjson")).First())!;
             Assert.AreEqual("container-cgroup", first["cpuScope"]!.GetValue<string>());
             measured = true;
             return Task.CompletedTask;
         };
-        await session.RunWithTelemetryAsync(3, measurement);
+        var manifest = await session.RunWithTelemetryAsync(3, measurement);
         Assert.IsTrue(measured);
         Assert.IsTrue(File.Exists(System.IO.Path.Combine(fixture.Output, "telemetry-manifest.json")));
         var clock = JsonNode.Parse(File.ReadAllText(System.IO.Path.Combine(fixture.Output, "clock-alignment.json")))!;
         Assert.IsTrue(clock["ready"]!.GetValue<bool>());
+        Assert.IsTrue(manifest.InputSha256.ContainsKey("workload-end-fence.json"));
+        Assert.IsTrue(manifest.InputSha256.ContainsKey("sampler-ended.json"));
+        foreach (var input in manifest.InputSha256)
+            Assert.AreEqual(input.Value, CampaignJson.HashFile(System.IO.Path.Combine(fixture.Output, input.Key)),
+                "Manifest must hash only finalized capture and fence artifacts.");
+    }
+
+    [TestMethod]
+    public async Task TelemetryBarrier_RejectsFinishedSamplerBeforeDispatchDespiteDelayedLogs()
+    {
+        await using var broker = await LocalBroker.StartAsync();
+        using var fixture = new CampaignStandFixture(broker.Uri);
+        File.WriteAllText(System.IO.Path.Combine(fixture.Path, "logs-delay"), "3000");
+        await using var session = await StandSession.StartAsync(fixture.Script, fixture.InventoryPath,
+            new CampaignDefinition(), "Mosquitto", fixture.Output, fixture.Docker);
+        var measured = false;
+        await Assert.ThrowsExceptionAsync<InvalidDataException>(() => session.RunWithTelemetryAsync(1,
+            _ => { measured = true; return Task.CompletedTask; }));
+        Assert.IsFalse(measured, "A sampler with its only sample already emitted cannot cover a new workload.");
+    }
+
+    [TestMethod]
+    public async Task TelemetryBarrier_RejectsSamplerEndingDuringWorkloadDespiteDelayedLogs()
+    {
+        await using var broker = await LocalBroker.StartAsync();
+        using var fixture = new CampaignStandFixture(broker.Uri);
+        File.WriteAllText(System.IO.Path.Combine(fixture.Path, "telemetry-delay"), "500");
+        File.WriteAllText(System.IO.Path.Combine(fixture.Path, "logs-delay"), "3000");
+        await using var session = await StandSession.StartAsync(fixture.Script, fixture.InventoryPath,
+            new CampaignDefinition(), "Mosquitto", fixture.Output, fixture.Docker);
+        await Assert.ThrowsExceptionAsync<InvalidDataException>(() => session.RunWithTelemetryAsync(3, async ct =>
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(TimeSpan.FromSeconds(15));
+            while (!File.Exists(System.IO.Path.Combine(fixture.Path, "logs-started")))
+                await Task.Delay(10, timeout.Token);
+            Assert.IsFalse(File.Exists(System.IO.Path.Combine(fixture.Output, "telemetry-manifest.json")),
+                "Controller is still collecting logs, but sampling has already ended.");
+        }));
+    }
+
+    [TestMethod]
+    public async Task TelemetryBarrier_RequiresFinalSampleAfterRemoteWorkloadEndFence()
+    {
+        await using var broker = await LocalBroker.StartAsync();
+        using var fixture = new CampaignStandFixture(broker.Uri);
+        File.WriteAllText(System.IO.Path.Combine(fixture.Path, "telemetry-delay"), "500");
+        // The remote completion fence is beyond the last sample even though the controller
+        // has not received that last sample yet (e.g. transport buffering).
+        File.WriteAllText(System.IO.Path.Combine(fixture.Path, "fence-uptime"), "103.0");
+        await using var session = await StandSession.StartAsync(fixture.Script, fixture.InventoryPath,
+            new CampaignDefinition(), "Mosquitto", fixture.Output, fixture.Docker);
+        await Assert.ThrowsExceptionAsync<InvalidDataException>(() => session.RunWithTelemetryAsync(3, _ => Task.CompletedTask));
     }
 
     [TestMethod]

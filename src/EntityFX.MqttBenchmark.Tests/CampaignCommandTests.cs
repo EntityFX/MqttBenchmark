@@ -49,6 +49,7 @@ public class CampaignCommandTests
     {
         await using var broker = await LocalBroker.StartAsync();
         using var fixture = new CampaignStandFixture(broker.Uri);
+        File.WriteAllText(Path.Combine(fixture.Path, "telemetry-delay"), "200");
         InitializeRepository(fixture.Path);
         var originalHash = CampaignJson.HashFile(fixture.InventoryPath);
         var docker = File.ReadAllText(fixture.Docker).Replace(

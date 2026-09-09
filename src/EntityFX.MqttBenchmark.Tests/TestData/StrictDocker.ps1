@@ -39,9 +39,22 @@ if ($joined -eq "stop $($broker.containerName)" -or $joined -eq "rm -f $($broker
     $state | ConvertTo-Json -Depth 20 | Set-Content $statePath
     exit 0
 }
-if ($joined -eq "logs --timestamps $($broker.containerName)") { '2026-09-09T00:00:00Z WARN fixture'; exit 0 }
+if ($joined -eq "logs --timestamps $($broker.containerName)") {
+    if (Test-Path (Join-Path $PSScriptRoot 'logs-delay')) {
+        'started' | Set-Content (Join-Path $PSScriptRoot 'logs-started')
+        Start-Sleep -Milliseconds ([int](Get-Content (Join-Path $PSScriptRoot 'logs-delay')))
+    }
+    '2026-09-09T00:00:00Z WARN fixture'; exit 0
+}
 if ($a[0] -eq 'exec' -and $a[1] -eq $broker.containerName) {
     $cmd = @($a | Select-Object -Skip 2)
+    if (($cmd -join ' ') -eq 'cat /proc/uptime') {
+        $uptime = if (Test-Path (Join-Path $PSScriptRoot 'fence-uptime')) { Get-Content (Join-Path $PSScriptRoot 'fence-uptime') } else {
+            ([double](Get-Content (Join-Path $PSScriptRoot 'last-sample-uptime')) + 0.01).ToString([Globalization.CultureInfo]::InvariantCulture)
+        }
+        "$uptime 0.0"
+        exit 0
+    }
     if (($cmd -join ' ') -eq 'date -u +%s') {
         if (Test-Path (Join-Path $PSScriptRoot 'clock-delay')) { Start-Sleep -Milliseconds ([int](Get-Content (Join-Path $PSScriptRoot 'clock-delay'))) }
         $offset = if (Test-Path (Join-Path $PSScriptRoot 'clock-offset')) { [int](Get-Content (Join-Path $PSScriptRoot 'clock-offset')) } else { 0 }
@@ -70,6 +83,7 @@ if ($a[0] -eq 'exec' -and $a[1] -eq $broker.containerName) {
         if ($cmd[2] -notmatch 'samples=(\d+)') { throw 'Sampler omitted count.' }
         for ($i = 0; $i -lt [int]$Matches[1]; $i++) {
             if (Test-Path (Join-Path $PSScriptRoot 'telemetry-delay')) { Start-Sleep -Milliseconds ([int](Get-Content (Join-Path $PSScriptRoot 'telemetry-delay'))) }
+            (100.0 + $i).ToString([Globalization.CultureInfo]::InvariantCulture) | Set-Content (Join-Path $PSScriptRoot 'last-sample-uptime')
             @{ timestamp = "2026-09-09T00:00:0${i}Z"; monotonicSeconds = 100.0 + $i; processRssBytes = 1048576; cgroupMemoryCurrentBytes = 2097152; cgroupCpuAndThrottleBase64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("usage_usec 123`nnr_throttled 1")); networkBase64 = ''; diskIoBase64 = ''; connectionsBase64 = ''; processIds = '1' } | ConvertTo-Json -Compress
         }
         exit 0

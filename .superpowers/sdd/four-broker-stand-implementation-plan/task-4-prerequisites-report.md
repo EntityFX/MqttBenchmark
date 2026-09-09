@@ -49,3 +49,22 @@ git diff --check
 ## Remaining live prerequisites
 
 Run the clock action against the real selected broker host and retain its result. The historical approximately 195-second skew requires external/operator synchronization if still present. Verify streamed readiness and sample/workload ordering with short managed pilots for all four brokers and each QoS. Confirm equivalent pinned resources and all preflight/pilot outcomes before the 288-point campaign. No baseline, calibration, fidelity or relay campaign acceptance is inferred from these unit/integration tests.
+
+## Review fix — sampler lifetime and complete workload coverage
+
+Review correctly identified that an incomplete controller task does not prove the sampler is still running: Docker log collection and config hashes happen after sampling. Two behavioral regressions against the real controller with delayed Docker logs reproduced false success, both before workload dispatch (one-sample capture) and when sampling finished during the workload. Both tests were RED because the old method returned success. A third RED case showed why controller receipt of the end event alone is insufficient: a delayed final sample can predate remote workload completion.
+
+The fix atomically writes `sampler-ended.json` at the final streamed sample, before post-sampler log capture. A one-sample capture publishes its end before readiness, preventing any workload dispatch. Matrix execution checks sampler state at dispatch and completion. It then issues a read-only `fence` action after the workload, reading `/proc/uptime` in the same broker container. The final sample's monotonic timestamp must be strictly greater than that fence, and readiness/end/fence container identities must match. This establishes first-sample-before-work and last-sample-after-work causally without wall-clock assumptions, including delayed event transport. The configured sample count/duration is unchanged; inadequate coverage fails rather than extending the run.
+
+Capture sample collection and manifest sealing are separate. All fence and controller writers finish before coverage validation and manifest hashing. Cancellation, failed sampling and insufficient coverage cannot seal a successful telemetry manifest. The positive test verifies hashes of the finalized fence/end and other capture evidence. The existing matrix identity test now gives its sampler realistic temporal spacing so its intended successful first workload has actual sample coverage.
+
+Focused Release: **7/7 passed**, 1.6174 minutes. Final full Release: **74/74 passed, 0 skipped**, 4.4293 minutes, including the final manifest-hash assertions. Local TRX: `C:\projects\EntityFx.Iot\MqttBenchmark\TestResults\task4-sampler-lifecycle\task4-sampler-lifecycle.trx`. `git diff --check` passed with only expected LF/CRLF notices. `mqtty` remains unchanged at approved `c7be868fb841245dfcd889abebe3c7f82afb5daf`. No live broker run or clock change was performed. Ready for scoped re-review.
+
+Commands from `MqttBenchmark`:
+
+```powershell
+dotnet test src/EntityFX.MqttBenchmark.Tests -c Release --no-restore --filter 'FullyQualifiedName~TelemetryBarrier_Rejects' --nologo --verbosity quiet --logger 'console;verbosity=normal'
+dotnet test src/EntityFX.MqttBenchmark.Tests -c Release --no-restore --filter FullyQualifiedName~TelemetryBarrier_RequiresFinalSampleAfterRemoteWorkloadEndFence --nologo --verbosity quiet --logger 'console;verbosity=normal'
+dotnet test src/EntityFX.MqttBenchmark.Tests -c Release --no-restore --filter 'FullyQualifiedName~TelemetryBarrier_|FullyQualifiedName~MatrixCommand_Propagates' --nologo --verbosity quiet --logger 'console;verbosity=normal'
+dotnet test src/EntityFX.MqttBenchmark.sln -c Release --no-restore --nologo --verbosity quiet --logger 'console;verbosity=normal' --logger 'trx;LogFileName=task4-sampler-lifecycle.trx' --results-directory TestResults/task4-sampler-lifecycle
+```

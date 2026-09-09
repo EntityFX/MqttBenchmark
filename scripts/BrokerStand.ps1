@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)][ValidateSet('validate', 'pull', 'start', 'health', 'clock', 'reset', 'capture', 'stop')][string]$Action,
+    [Parameter(Mandatory)][ValidateSet('validate', 'pull', 'start', 'health', 'clock', 'fence', 'reset', 'capture', 'stop')][string]$Action,
     [Parameter(Mandatory)][string]$ConfigPath,
     [string]$OutputDirectory = 'artifacts/broker-stand',
     [ValidateRange(1, 86400)][int]$CaptureSeconds = 1,
@@ -281,6 +281,13 @@ function Write-Capture($Broker) {
         $sample.connectionsScope = 'host-shared'
         ConvertTo-Json -InputObject $sample -Compress | Add-Content -LiteralPath (Join-Path $OutputDirectory 'telemetry.ndjson')
         $samples.Add($sample)
+        if ($samples.Count -eq $CaptureSeconds) {
+            # No later sample will cover work, even while Docker logs/config capture continues.
+            # For a one-sample capture publish this before readiness to prevent workload dispatch.
+            $endedPath = Join-Path $OutputDirectory 'sampler-ended.json'
+            Write-JsonFile ([ordered]@{ lastSampleTimestamp = $sample.timestamp; lastSampleMonotonicSeconds = $sample.monotonicSeconds; sampleCount = $samples.Count; controllerObservedUtc = [DateTimeOffset]::UtcNow.ToString('O'); containerId = $run.containerId }) "$endedPath.tmp"
+            Move-Item -LiteralPath "$endedPath.tmp" -Destination $endedPath
+        }
         if ($samples.Count -eq 1) {
             $readyPath = Join-Path $OutputDirectory 'telemetry-ready.json'
             Write-JsonFile ([ordered]@{ firstSampleTimestamp = $sample.timestamp; firstSampleMonotonicSeconds = $sample.monotonicSeconds; controllerObservedUtc = [DateTimeOffset]::UtcNow.ToString('O'); containerId = $run.containerId }) "$readyPath.tmp"
@@ -340,6 +347,18 @@ try {
         }
         'health' { [void](Get-Run $broker); Test-MqttReadiness $broker.mqttUri; $status = 'healthy' }
         'clock' { Write-ClockAlignment $broker; $status = 'clock-aligned' }
+        'fence' {
+            $run = Get-Run $broker
+            $before = [DateTimeOffset]::UtcNow
+            $raw = Invoke-Docker @('--context', $context, 'exec', $broker.containerName, 'cat', '/proc/uptime')
+            $after = [DateTimeOffset]::UtcNow
+            $uptime = 0.0
+            if (-not [double]::TryParse(($raw -split '\s+')[0], [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$uptime) -or -not [double]::IsFinite($uptime) -or $uptime -lt 0) { throw 'Invalid remote monotonic completion fence.' }
+            $path = Join-Path $OutputDirectory 'workload-end-fence.json'
+            Write-JsonFile ([ordered]@{ monotonicSeconds = $uptime; method = 'docker-exec-proc-uptime-after-workload'; controllerBeforeUtc = $before.ToString('O'); controllerAfterUtc = $after.ToString('O'); context = $context; containerId = $run.containerId; imageId = $run.imageId }) "$path.tmp"
+            Move-Item -LiteralPath "$path.tmp" -Destination $path
+            $status = 'fenced'
+        }
         'capture' { Write-Capture $broker; $status = 'captured' }
         'stop' { Invoke-Docker @('--context', $context, 'stop', $broker.containerName) | Out-Null; $status = 'stopped' }
         'reset' { Invoke-Docker @('--context', $context, 'rm', '-f', $broker.containerName) | Out-Null; $status = 'reset' }
