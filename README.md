@@ -5,6 +5,10 @@ The reproducible calibration pipeline is driven by
 two exact payload sizes, three QoS levels, eight client counts and ten repeats
 (1920 immutable runs).
 
+Both repositories must have no tracked changes when aggregation starts. This
+guarantees that the recorded commit SHA identifies the code that produced the
+profile; untracked result directories do not block aggregation.
+
 Preview the matrix without contacting brokers:
 
 ```powershell
@@ -27,6 +31,18 @@ dotnet run --project src/EntityFX.MqttBenchmark.Cli -- matrix `
 For an infrastructure smoke test, add `--broker Mosquitto --max-runs 1`.
 The full sequential matrix needs at least 18.7 hours for its configured warm-up and
 measurement windows, before connection and delivery-drain overhead.
+
+Run the complete matrix and aggregate it into a versioned runtime profile with one
+command (the MqttY repository must be clean so its commit can be recorded):
+
+```powershell
+./scripts/RunDissertationMatrix.ps1 `
+  -Campaign dissertation-20260909 `
+  -MqttYRepository ../mqtty
+```
+
+The same command runs nightly and on demand in `dissertation-matrix.yml` on a
+self-hosted Windows runner that can reach all four configured broker endpoints.
 
 Aggregate one complete campaign and generate the runtime profile:
 
