@@ -7,6 +7,39 @@ namespace EntityFX.MqttBenchmark.Tests;
 public class CampaignCommandTests
 {
     [TestMethod]
+    public async Task PreflightCommand_PropagatesTrustedBuildProvenanceDirectory()
+    {
+        await using var broker = await LocalBroker.StartAsync();
+        using var fixture = new CampaignStandFixture(broker.Uri);
+        InitializeRepository(fixture.Path);
+        var inventory = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(fixture.InventoryPath))!;
+        var brokers = inventory["brokers"]!.AsArray();
+        var aedes = brokers.Single(x => x!["name"]!.GetValue<string>() == "Aedes")!;
+        brokers.Remove(aedes); brokers.Insert(0, aedes);
+        foreach (var item in brokers) item!["loaded"] = item == aedes;
+        inventory["activeBroker"] = "Aedes";
+        aedes["mqttUri"] = broker.Uri.ToString();
+        brokers.Single(x => x!["name"]!.GetValue<string>() == "Mosquitto")!["mqttUri"] = "mqtt://127.0.0.1:65534";
+        File.WriteAllText(fixture.InventoryPath, inventory.ToJsonString());
+        var configPath = Path.Combine(fixture.Path, "campaign.json");
+        CampaignJson.WriteNew(configPath, new CampaignDefinition());
+        var output = Path.Combine(fixture.Path, "preflight");
+        var missingTrustedDirectory = Path.Combine(fixture.Path, "missing-trusted");
+        var options = new Dictionary<string, string?>
+        {
+            ["config"] = configPath, ["stand"] = fixture.InventoryPath, ["output"] = output, ["broker"] = "Aedes",
+            ["stand-script"] = fixture.Script, ["docker-executable"] = fixture.Docker,
+            ["benchmark-repo"] = fixture.Path, ["trusted-build-provenance"] = missingTrustedDirectory
+        };
+
+        Assert.AreEqual(2, await CampaignCommands.ExecuteAsync("preflight", options));
+        var report = CampaignJson.Read<PreflightReport>(Path.Combine(output, "preflight.json"));
+        StringAssert.Contains(report.Brokers.Single().Protocol.RttError!, "Trusted build provenance is missing");
+        Assert.IsFalse(File.Exists(Path.Combine(fixture.Path, "docker-calls.ndjson")),
+            "A missing trust record must fail before Docker and must not silently fall back to build.");
+    }
+
+    [TestMethod]
     public async Task AggregateCommand_PublishesV3OnlyForSealedCompleteCampaignAndRefusesOverwrite()
     {
         using var temp = new CampaignTemp();

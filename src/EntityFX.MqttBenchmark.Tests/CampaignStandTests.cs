@@ -7,6 +7,42 @@ namespace EntityFX.MqttBenchmark.Tests;
 public class CampaignStandTests
 {
     [TestMethod]
+    public async Task StandSession_PropagatesTrustedBuildProvenanceToEveryCustomPull()
+    {
+        await using var broker = await LocalBroker.StartAsync();
+        using var fixture = new CampaignStandFixture(broker.Uri);
+        var inventory = JsonNode.Parse(File.ReadAllText(fixture.InventoryPath))!;
+        var brokers = inventory["brokers"]!.AsArray();
+        var aedes = brokers.Single(x => x!["name"]!.GetValue<string>() == "Aedes")!;
+        brokers.Remove(aedes); brokers.Insert(0, aedes);
+        foreach (var item in brokers) item!["loaded"] = item == aedes;
+        inventory["activeBroker"] = "Aedes";
+        aedes["mqttUri"] = broker.Uri.ToString();
+        brokers.Single(x => x!["name"]!.GetValue<string>() == "Mosquitto")!["mqttUri"] = "mqtt://127.0.0.1:65534";
+        File.WriteAllText(fixture.InventoryPath, inventory.ToJsonString());
+        var trusted = Path.Combine(fixture.Path, "trusted");
+        Directory.CreateDirectory(trusted);
+        var inputs = new[] { ".dockerignore", "aedes/package-lock.json", "aedes/package.json", "aedes/server.js", "compose.yml", "Dockerfile.aedes" }
+            .Select(path => new JsonObject { ["path"] = path, ["sha256"] = CampaignJson.HashFile(Path.Combine(fixture.Path, "docker", "brokers", path)) })
+            .ToArray();
+        var record = new JsonObject
+        {
+            ["broker"] = "Aedes", ["context"] = "default", ["image"] = aedes["image"]!.GetValue<string>(),
+            ["imageId"] = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            ["buildInputs"] = new JsonArray(inputs)
+        };
+        File.WriteAllText(Path.Combine(trusted, "aedes.json"), record.ToJsonString());
+
+        await using var session = await StandSession.StartAsync(fixture.Script, fixture.InventoryPath,
+            new CampaignDefinition(), "Aedes", fixture.Output, fixture.Docker,
+            trustedBuildProvenanceDirectory: trusted);
+
+        Assert.AreEqual(2, Directory.GetFiles(fixture.Output, "aedes.json", SearchOption.AllDirectories).Length);
+        Assert.IsFalse(File.ReadAllLines(Path.Combine(fixture.Path, "docker-calls.ndjson"))
+            .Any(line => line.Contains("\"build\"")));
+    }
+
+    [TestMethod]
     public async Task StandClock_AlignedDaemonHighResolutionAvoidsWholeSecondHighRttFalseRejection()
     {
         await using var broker = await LocalBroker.StartAsync();

@@ -5,7 +5,8 @@ param(
     [string]$OutputDirectory = 'artifacts/broker-stand',
     [ValidateRange(1, 86400)][int]$CaptureSeconds = 1,
     [ValidateRange(1, 300)][int]$HealthTimeoutSeconds = 60,
-    [string]$DockerExecutable = 'docker'
+    [string]$DockerExecutable = 'docker',
+    [string]$TrustedBuildProvenanceDirectory
 )
 
 Set-StrictMode -Version Latest
@@ -91,6 +92,39 @@ function Get-BuildInputs($Broker) {
 }
 
 function Get-BuildProvenancePath($Broker) { return Join-Path $OutputDirectory "build/$($Broker.serviceName).json" }
+
+function Get-TrustedBuildProvenance($Broker, $Inputs) {
+    if ([string]::IsNullOrWhiteSpace($TrustedBuildProvenanceDirectory)) { return $null }
+    $trustedRoot = [IO.Path]::GetFullPath($TrustedBuildProvenanceDirectory)
+    $path = Join-Path $trustedRoot "$($Broker.serviceName).json"
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Trusted build provenance is missing for broker '$($Broker.name)': $path" }
+    $bytes = [IO.File]::ReadAllBytes($path)
+    $record = [Text.Encoding]::UTF8.GetString($bytes) | ConvertFrom-Json -AsHashtable
+    foreach ($property in @('broker', 'context', 'image', 'imageId', 'buildInputs')) {
+        if (-not $record.ContainsKey($property)) { throw "Trusted build provenance is missing required property '$property'." }
+    }
+    if ($record.broker -ne $Broker.name -or $record.context -ne $context -or $record.image -ne $Broker.image -or -not (Is-Digest ([string]$record.imageId))) {
+        throw 'Trusted build provenance does not match the selected broker, context, and image.'
+    }
+    if ($record.buildInputs.Count -ne $Inputs.Count) { throw 'Trusted build provenance build inputs do not match current build inputs.' }
+    for ($i = 0; $i -lt $Inputs.Count; $i++) {
+        if ($record.buildInputs[$i].path -ne $Inputs[$i].path -or $record.buildInputs[$i].sha256 -ne $Inputs[$i].sha256) {
+            throw 'Trusted build provenance build inputs do not match current build inputs.'
+        }
+    }
+    $actual = Invoke-Docker @('--context', $context, 'image', 'inspect', '--format', '{{.Id}}', $Broker.image)
+    if ($actual -ne $record.imageId) { throw 'Image ID does not match trusted build provenance.' }
+    return [ordered]@{
+        broker = $Broker.name
+        context = $context
+        image = $Broker.image
+        imageId = $actual
+        buildInputs = $Inputs
+        capturedAt = [DateTimeOffset]::UtcNow.ToString('O')
+        source = 'trusted-existing-image'
+        trustedManifestSha256 = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+    }
+}
 
 function Assert-BuildIdentity($Broker) {
     if (-not (Is-Custom $Broker)) { return $null }
@@ -342,13 +376,17 @@ try {
         'pull' {
             if (Is-Custom $broker) {
                 $inputs = @(Get-BuildInputs $broker)
-                $compose = New-Compose $broker -BuildOnly
-                Invoke-Docker @('--context', $context, 'compose', '-f', $compose.path, 'build', $broker.serviceName) | Out-Null
-                $imageId = Invoke-Docker @('--context', $context, 'image', 'inspect', '--format', '{{.Id}}', $broker.image)
-                if (-not (Is-Digest $imageId)) { throw 'Build returned an invalid image ID.' }
-                if ((ConvertTo-Json -InputObject $inputs -Compress) -ne (ConvertTo-Json -InputObject @(Get-BuildInputs $broker) -Compress)) { throw 'Build inputs changed during the build.' }
                 New-Item -ItemType Directory -Force -Path (Join-Path $OutputDirectory 'build') | Out-Null
-                Write-JsonFile ([ordered]@{ broker = $broker.name; context = $context; image = $broker.image; imageId = $imageId; buildInputs = $inputs; capturedAt = [DateTimeOffset]::UtcNow.ToString('O') }) (Get-BuildProvenancePath $broker)
+                $trusted = Get-TrustedBuildProvenance $broker $inputs
+                if ($trusted) { Write-JsonFile $trusted (Get-BuildProvenancePath $broker) }
+                else {
+                    $compose = New-Compose $broker -BuildOnly
+                    Invoke-Docker @('--context', $context, 'compose', '-f', $compose.path, 'build', $broker.serviceName) | Out-Null
+                    $imageId = Invoke-Docker @('--context', $context, 'image', 'inspect', '--format', '{{.Id}}', $broker.image)
+                    if (-not (Is-Digest $imageId)) { throw 'Build returned an invalid image ID.' }
+                    if ((ConvertTo-Json -InputObject $inputs -Compress) -ne (ConvertTo-Json -InputObject @(Get-BuildInputs $broker) -Compress)) { throw 'Build inputs changed during the build.' }
+                    Write-JsonFile ([ordered]@{ broker = $broker.name; context = $context; image = $broker.image; imageId = $imageId; buildInputs = $inputs; capturedAt = [DateTimeOffset]::UtcNow.ToString('O'); source = 'built' }) (Get-BuildProvenancePath $broker)
+                }
             } else { Invoke-Docker @('--context', $context, 'pull', "$($broker.image)@$($broker.digest)") | Out-Null }
             $status = 'pulled'
         }

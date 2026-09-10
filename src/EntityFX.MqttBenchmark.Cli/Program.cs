@@ -133,7 +133,7 @@ internal static class Cli
         Console.WriteLine("  preflight --stand <broker-stand.v1.json> --config <benchmark-campaign.v3.json> --output <new-dir> [--broker <name>]");
         Console.WriteLine("  matrix --stand <json> --config <v3-json> --campaign <directory> [--resume] [--broker <name>] [--max-runs <n>] [--dry-run]");
         Console.WriteLine("  aggregate --config <v3-json> --raw <campaign-dir> --output <new-dir>");
-        Console.WriteLine("  v3 stand operations also accept --docker-executable <path>, --benchmark-repo <dir>, --stand-script <path>.");
+        Console.WriteLine("  v3 stand operations also accept --docker-executable <path>, --benchmark-repo <dir>, --stand-script <path>, --trusted-build-provenance <dir>.");
         Console.WriteLine("Legacy v2:");
         Console.WriteLine("  matrix --config <json> --output <raw-root> [--campaign <id>] [--broker <name>] [--max-runs <n>] [--dry-run]");
         Console.WriteLine("  aggregate --config <json> --raw <campaign-dir> --output <dir> --mqtt-y-repo <dir> [--benchmark-repo <dir>]");

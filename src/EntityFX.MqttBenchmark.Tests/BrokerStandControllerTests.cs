@@ -110,6 +110,63 @@ public class BrokerStandControllerTests
     [DataTestMethod]
     [DataRow("Aedes")]
     [DataRow("ActiveMQ")]
+    public void CustomBuild_TrustedProvenanceReusesExactExistingImageWithoutBuild(string broker)
+    {
+        using var stand = new StandFixture(broker);
+        stand.Ok("pull");
+        var trustedDirectory = Path.Combine(stand.Directory, "trusted-build-provenance");
+        Directory.CreateDirectory(trustedDirectory);
+        var trustedPath = Path.Combine(trustedDirectory, broker.ToLowerInvariant() + ".json");
+        File.Copy(Path.Combine(stand.Directory, "build", broker.ToLowerInvariant() + ".json"), trustedPath);
+        File.Delete(Path.Combine(stand.Directory, "docker-calls.ndjson"));
+        Directory.Delete(Path.Combine(stand.Directory, "build"), true);
+
+        stand.TrustedBuildProvenanceDirectory = trustedDirectory;
+        stand.Ok("pull");
+
+        var calls = File.ReadAllLines(stand.CallsPath);
+        Assert.IsFalse(calls.Any(line => line.Contains("\"build\"")), "A verified local image must not trigger an online build.");
+        var provenance = stand.Json($"build/{broker.ToLowerInvariant()}.json");
+        Assert.AreEqual("trusted-existing-image", provenance["source"]!.GetValue<string>());
+        Assert.AreEqual(HashFile(trustedPath), provenance["trustedManifestSha256"]!.GetValue<string>());
+        Assert.AreEqual(StandFixture.ImageId, provenance["imageId"]!.GetValue<string>());
+    }
+
+    [DataTestMethod]
+    [DataRow("Aedes", true)]
+    [DataRow("ActiveMQ", true)]
+    [DataRow("Aedes", false)]
+    [DataRow("ActiveMQ", false)]
+    public void CustomBuild_TrustedProvenanceRejectsInputOrImageMismatch(string broker, bool changeInput)
+    {
+        using var stand = new StandFixture(broker);
+        stand.Ok("pull");
+        var trustedDirectory = Path.Combine(stand.Directory, "trusted-build-provenance");
+        Directory.CreateDirectory(trustedDirectory);
+        var trustedPath = Path.Combine(trustedDirectory, broker.ToLowerInvariant() + ".json");
+        File.Copy(Path.Combine(stand.Directory, "build", broker.ToLowerInvariant() + ".json"), trustedPath);
+        Directory.Delete(Path.Combine(stand.Directory, "build"), true);
+        File.Delete(stand.CallsPath);
+        stand.TrustedBuildProvenanceDirectory = trustedDirectory;
+        if (changeInput)
+        {
+            var input = broker == "Aedes" ? "aedes/server.js" : "activemq/Dockerfile";
+            File.AppendAllText(Path.Combine(stand.Directory, "docker", "brokers", input), "\n# changed\n");
+            stand.Fails("pull", "build inputs");
+        }
+        else
+        {
+            File.WriteAllText(Path.Combine(stand.Directory, "tag-image-id"),
+                "sha256:1123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef");
+            stand.Fails("pull", "Image ID");
+        }
+        Assert.IsFalse(File.Exists(stand.CallsPath) && File.ReadAllLines(stand.CallsPath).Any(line => line.Contains("\"build\"")),
+            "A rejected trust record must not fall back to an online build.");
+    }
+
+    [DataTestMethod]
+    [DataRow("Aedes")]
+    [DataRow("ActiveMQ")]
     public void Cleanup_RemainsAvailableWhenBuildInputsHaveChanged(string broker)
     {
         using var stand = new StandFixture(broker);
@@ -271,6 +328,7 @@ public class BrokerStandControllerTests
         public JsonObject Inventory { get; }
         public JsonObject Broker => Inventory["brokers"]![0]!.AsObject();
         public byte ConnackCode { get; set; }
+        public string? TrustedBuildProvenanceDirectory { get; set; }
         private int connections;
         public int Connections => Volatile.Read(ref connections);
         public int FailFirstConnections { get; set; }
@@ -345,6 +403,11 @@ public class BrokerStandControllerTests
                 "-ConfigPath", Path.Combine(Directory, "stand.json"), "-OutputDirectory", Directory,
                 "-DockerExecutable", Path.Combine(Directory, "docker.ps1"), "-CaptureSeconds", seconds.ToString() }) info.ArgumentList.Add(arg);
             info.ArgumentList.Add("-HealthTimeoutSeconds"); info.ArgumentList.Add("1");
+            if (TrustedBuildProvenanceDirectory != null)
+            {
+                info.ArgumentList.Add("-TrustedBuildProvenanceDirectory");
+                info.ArgumentList.Add(TrustedBuildProvenanceDirectory);
+            }
             using var process = Process.Start(info)!;
             var output = process.StandardOutput.ReadToEndAsync();
             var error = process.StandardError.ReadToEndAsync();

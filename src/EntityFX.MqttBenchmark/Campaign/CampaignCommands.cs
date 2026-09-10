@@ -45,6 +45,8 @@ public static class CampaignCommands
         var repository = Value(options, "benchmark-repo", Directory.GetCurrentDirectory());
         var script = Value(options, "stand-script", Path.Combine(repository, "scripts", "BrokerStand.ps1"));
         var docker = Value(options, "docker-executable", "docker");
+        var trustedBuildProvenance = options.TryGetValue("trusted-build-provenance", out var trustedValue) &&
+            !string.IsNullOrWhiteSpace(trustedValue) ? trustedValue : null;
         var directory = Path.GetFullPath(Required(options, command == "matrix" ? "campaign" : "output"));
         var campaignIdentity = new CampaignIdentity(Path.GetFileName(directory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)),
             configHash, CampaignJson.HashFile(standPath), config.DeploymentMode, config.CpuMode, GitRevisionReader.ReadHead(repository));
@@ -61,7 +63,9 @@ public static class CampaignCommands
                 try
                 {
                     await using var stand = await StandSession.StartAsync(script, standPath, config, name,
-                        Path.Combine(directory, name, "stand"), docker, cancellationToken, expectedStandSha256: campaignIdentity.StandSha256);
+                        Path.Combine(directory, name, "stand"), docker, cancellationToken,
+                        expectedStandSha256: campaignIdentity.StandSha256,
+                        trustedBuildProvenanceDirectory: trustedBuildProvenance);
                     var protocol = await runner.PreflightAsync(name, stand.Endpoint, cancellationToken);
                     CampaignJson.WriteNew(Path.Combine(directory, name, "protocol.json"), protocol);
                     var telemetry = await stand.CaptureAsync(1, cancellationToken);
@@ -87,7 +91,9 @@ public static class CampaignCommands
             {
                 Console.WriteLine($"{key.Key}, attempt {number}/3");
                 await using var stand = await StandSession.StartAsync(script, standPath, config, key.Broker,
-                    Path.Combine(attemptPath, "stand"), docker, ct, expectedStandSha256: campaignIdentity.StandSha256);
+                    Path.Combine(attemptPath, "stand"), docker, ct,
+                    expectedStandSha256: campaignIdentity.StandSha256,
+                    trustedBuildProvenanceDirectory: trustedBuildProvenance);
                 var protocol = await runner.PreflightAsync(key.Broker, stand.Endpoint, ct);
                 CampaignJson.WriteNew(Path.Combine(attemptPath, "protocol.json"), protocol);
                 if (!protocol.Success || protocol.RttBaselineMs == null) throw new IOException("Protocol preflight failed; see protocol.json.");

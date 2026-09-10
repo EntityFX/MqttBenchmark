@@ -22,15 +22,18 @@ public sealed record PreflightReport(int SchemaVersion, CampaignIdentity Identit
 public sealed class StandSession : IAsyncDisposable
 {
     private readonly string script, selectedPath, output, docker;
+    private readonly string? trustedBuildProvenanceDirectory;
     private readonly Dictionary<string, FileStream> leases = new(StringComparer.Ordinal);
     private bool started;
     public Uri Endpoint { get; }
-    private StandSession(string script, string selectedPath, string output, string docker, Uri endpoint) =>
-        (this.script, this.selectedPath, this.output, this.docker, Endpoint) = (script, selectedPath, output, docker, endpoint);
+    private StandSession(string script, string selectedPath, string output, string docker, Uri endpoint,
+        string? trustedBuildProvenanceDirectory) =>
+        (this.script, this.selectedPath, this.output, this.docker, Endpoint, this.trustedBuildProvenanceDirectory) =
+        (script, selectedPath, output, docker, endpoint, trustedBuildProvenanceDirectory);
 
     public static async Task<StandSession> StartAsync(string script, string inventoryPath, CampaignDefinition config,
         string broker, string output, string dockerExecutable = "docker", CancellationToken cancellationToken = default,
-        string? expectedStandSha256 = null)
+        string? expectedStandSha256 = null, string? trustedBuildProvenanceDirectory = null)
     {
         config.Validate();
         var inputBytes = File.ReadAllBytes(inventoryPath);
@@ -43,8 +46,10 @@ public sealed class StandSession : IAsyncDisposable
         var selected = brokers.Single(x => x!["name"]!.GetValue<string>() == broker)!;
         output = Path.GetFullPath(output);
         var selectedPath = Path.Combine(output, "stand.selected.json");
+        var trusted = string.IsNullOrWhiteSpace(trustedBuildProvenanceDirectory)
+            ? null : Path.GetFullPath(trustedBuildProvenanceDirectory);
         var session = new StandSession(Path.GetFullPath(script), selectedPath, output, dockerExecutable,
-            new Uri(selected["mqttUri"]!.GetValue<string>()));
+            new Uri(selected["mqttUri"]!.GetValue<string>()), trusted);
         try
         {
             // A context lease spans preflight, measurement, capture and stop, also across different campaigns.
@@ -179,6 +184,11 @@ public sealed class StandSession : IAsyncDisposable
         foreach (var arg in new[] { "-NoProfile", "-File", script, "-Action", action, "-ConfigPath", inventory,
             "-OutputDirectory", directory, "-DockerExecutable", docker, "-CaptureSeconds", seconds.ToString(System.Globalization.CultureInfo.InvariantCulture) })
             info.ArgumentList.Add(arg);
+        if (trustedBuildProvenanceDirectory != null)
+        {
+            info.ArgumentList.Add("-TrustedBuildProvenanceDirectory");
+            info.ArgumentList.Add(trustedBuildProvenanceDirectory);
+        }
         using var process = Process.Start(info) ?? throw new IOException("Unable to launch stand controller.");
         var stdout = process.StandardOutput.ReadToEndAsync();
         var stderr = process.StandardError.ReadToEndAsync();
