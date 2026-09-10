@@ -59,7 +59,7 @@ public sealed class LoadGeneratorGuard : IAsyncDisposable, IMeasurementWindowObs
         }
         catch (Exception error)
         {
-            CampaignJson.WriteNew(Path.Combine(directory, "load-generator-summary.json"), Report(null, null, clock.Frequency,
+            CampaignJson.WriteNew(Path.Combine(directory, "load-generator-summary.json"), Report((error as LoadGeneratorHardwareException)?.Network, null, clock.Frequency,
                 new(false, new[] { error.GetType().Name + ": " + error.Message }, Array.Empty<LoadGeneratorInterval>())));
             throw;
         }
@@ -168,7 +168,7 @@ public sealed class LoadGeneratorClock : ILoadGeneratorClock
 }
 
 public sealed record LoadGeneratorInterface(string Id, string Name, string Description, int Index,
-    long LinkSpeedBitsPerSecond, string Destination, string InterfaceType);
+    long LinkSpeedBitsPerSecond, string Destination, string InterfaceType, AdapterHardwareEvidence? HardwareEvidence = null);
 public sealed record LoadGeneratorCounters(ulong Idle100ns, ulong Kernel100ns, ulong User100ns,
     ulong ReceivedBytes, ulong SentBytes, long LinkSpeedBitsPerSecond);
 public sealed record LoadGeneratorSample(long ReadStartedTick, long ReadEndedTick,

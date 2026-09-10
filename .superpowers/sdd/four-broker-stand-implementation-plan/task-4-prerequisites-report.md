@@ -119,3 +119,29 @@ $loadCounters.Network | Format-List
 $loadCounters.Read() | Format-List
 git diff --check
 ```
+
+## Review fix — authoritative physical-interface admission
+
+The review finding was reproduced with read-only Windows metadata: `Ethernet 12`, index **26**, GUID `{7FDD94A0-C712-470F-870B-38F5AB1E27D3}`, is a VirtualBox Host-Only Ethernet Adapter with `HardwareInterface=false`, `Virtual=true`, while .NET exposes it as Ethernet with 1 Gbit/s. The previous type/speed gate admitted that class of virtual adapter. The current broker route remains `Ethernet 9`, index **39**, GUID `{D8909FF0-176D-4CC5-A372-3F3D376C37ED}`, `HardwareInterface=true`, `Virtual=false`, 1 Gbit/s.
+
+`WindowsAdapterMetadataProvider` now queries authoritative `MSFT_NetAdapter` metadata using Windows `Get-NetAdapter -IncludeHidden`, filtered to the OS-selected interface index, with a ten-second process deadline. Admission matches both index and adapter GUID and requires explicit `HardwareInterface=true` and `Virtual=false`; missing/unknown flags, false hardware, contradictory virtual metadata, mismatched identity, query errors and malformed/ambiguous query results fail closed. No adapter-name heuristic is used: a physical adapter with a virtual-looking custom name still passes if authoritative evidence matches. The metadata provider/query boundary is injected for cross-platform deterministic tests; non-Windows production baseline remains rejected. Querying happens before local sampling, not in the one-second counter loop; each later read still verifies route, adapter GUID/up state and unchanged capacity.
+
+Accepted `network.hardwareEvidence` is stored in immutable local provenance and final summary with flags, index/GUID, source and observed UTC. A rejected/query-failed adapter carries its structured evidence into the failed summary, rather than losing it in a generic error string. The benchmark observation schema and all CPU/network/coverage thresholds remain unchanged.
+
+Strict TDD: **11 admission/provenance RED failures** reproduced virtual, unknown, query-error and mismatched evidence acceptance, missing positive evidence, and dropped rejection provenance; **6 metadata-provider RED failures** covered the actual two adapter record shapes and missing/ambiguous/malformed results. Focused Release: **34/34 passed**, including the previous guard suite. Read-only native verification then returned false/true for interface 26 and true/false for interface 39; constructing the actual broker-route counter source and reading its counters still succeeded. The final full Release suite completed **114/114 passed, 0 failed, 0 skipped**; its TRX is retained locally at `TestResults/task4-hardware-full/task4-hardware-full.trx`. A fresh parent verification repeated the focused set at **34/34 passed** before commit. No MQTT connection, pilot, baseline, adapter change or prior artifact edit was performed in this review-fix round. Final independent review remains required before guarded live validation.
+
+Commands from `MqttBenchmark`:
+
+```powershell
+Get-NetAdapter -IncludeHidden | Where-Object { $_.InterfaceIndex -in @(26,39) -or $_.InterfaceDescription -like '*Hyper-V*' } | Select-Object InterfaceIndex,InterfaceGuid,Name,InterfaceDescription,HardwareInterface,Virtual,LinkSpeed | ConvertTo-Json -Depth 3
+dotnet test src/EntityFX.MqttBenchmark.Tests -c Release --filter FullyQualifiedName~AdapterHardwareTests --logger 'trx;LogFileName=hardware-admission-red.trx' --results-directory TestResults/task4-hardware-red
+dotnet test src/EntityFX.MqttBenchmark.Tests -c Release --filter FullyQualifiedName~AdapterHardwareTests.WindowsMetadata --logger 'trx;LogFileName=hardware-provider-red.trx' --results-directory TestResults/task4-hardware-red
+dotnet test src/EntityFX.MqttBenchmark.Tests -c Release --filter 'FullyQualifiedName~AdapterHardwareTests|FullyQualifiedName~LoadGeneratorGuardTests' --logger 'trx;LogFileName=hardware-focused-green.trx' --results-directory TestResults/task4-hardware-green
+dotnet test src/EntityFX.MqttBenchmark.sln -c Release --no-restore --logger 'trx;LogFileName=task4-hardware-full.trx' --results-directory TestResults/task4-hardware-full
+Add-Type -Path ./src/EntityFX.MqttBenchmark/bin/Release/net6.0/EntityFX.MqttBenchmark.dll
+$hardwareProvider = [EntityFX.MqttBenchmark.Campaign.WindowsAdapterMetadataProvider]::new($null)
+$hardwareProvider.Read(26) | ConvertTo-Json -Depth 4
+$physicalCounters = [EntityFX.MqttBenchmark.Campaign.WindowsLoadGeneratorCounters]::new([uri]'mqtt://10.10.157.111:9884', $null)
+$physicalCounters.Network | ConvertTo-Json -Depth 4
+$physicalCounters.Read() | Format-List
+```

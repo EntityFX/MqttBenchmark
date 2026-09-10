@@ -7,7 +7,8 @@ namespace EntityFX.MqttBenchmark.Tests;
 public class LoadGeneratorGuardTests
 {
     private static readonly DateTimeOffset Epoch = DateTimeOffset.Parse("2026-09-10T00:00:00Z");
-    internal static readonly LoadGeneratorInterface Nic = new("nic-39", "Ethernet 9", "Intel 82579LM", 39, 1_000_000_000, "10.10.157.111", "Ethernet");
+    internal static readonly LoadGeneratorInterface Nic = new("{D8909FF0-176D-4CC5-A372-3F3D376C37ED}", "Ethernet 9", "Intel 82579LM", 39, 1_000_000_000, "10.10.157.111", "Ethernet",
+        new(39, "{D8909FF0-176D-4CC5-A372-3F3D376C37ED}", true, false, "deterministic-fixture", Epoch));
     private static LoadGeneratorSample Sample(long tick, ulong idle, ulong rx = 0, ulong tx = 0) =>
         new(tick, tick, Epoch.AddMilliseconds(tick), Epoch.AddMilliseconds(tick), new(idle, (ulong)tick, 0, rx, tx, Nic.LinkSpeedBitsPerSecond));
     private static LoadGeneratorAssessment Assess(params LoadGeneratorSample[] samples) =>
