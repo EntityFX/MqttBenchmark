@@ -6,7 +6,7 @@ namespace EntityFX.MqttBenchmark.Campaign;
 public static class CampaignCommands
 {
     public static async Task<int> ExecuteAsync(string command, IReadOnlyDictionary<string, string?> options,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, Func<Uri, ILoadGeneratorCounters>? loadCountersFactory = null)
     {
         var configPath = Required(options, "config");
         var configBytes = File.ReadAllBytes(configPath);
@@ -98,8 +98,11 @@ public static class CampaignCommands
                 RunObservation? observation = null;
                 var telemetry = await stand.RunWithTelemetryAsync(captureSeconds, async measurementToken =>
                 {
+                    await using var loadGuard = LoadGeneratorGuard.Start(stand.Endpoint, attemptPath, loadCountersFactory,
+                        cancellationToken: measurementToken);
                     observation = await runner.RunAsync(config, key, stand.Endpoint, campaignIdentity.CampaignId,
-                        key.Key + $".attempt-{number:00}", attemptPath, protocol.RttBaselineMs.Value, measurementToken);
+                        key.Key + $".attempt-{number:00}", attemptPath, protocol.RttBaselineMs.Value, measurementToken, loadGuard);
+                    await loadGuard.CompleteAsync();
                 }, ct);
                 var report = PreflightReport.Create(campaignIdentity, new[] { new BrokerPreflight(protocol, telemetry) });
                 CampaignJson.WriteNew(Path.Combine(attemptPath, "preflight.json"), report);

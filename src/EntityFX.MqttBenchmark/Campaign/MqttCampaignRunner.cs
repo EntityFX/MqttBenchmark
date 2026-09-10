@@ -109,7 +109,8 @@ public sealed class MqttCampaignRunner
     }
 
     public async Task<RunObservation> RunAsync(CampaignDefinition config, CampaignKey key, Uri endpoint, string campaignId,
-        string runId, string directory, double rttBaselineMs, CancellationToken cancellationToken = default)
+        string runId, string directory, double rttBaselineMs, CancellationToken cancellationToken = default,
+        IMeasurementWindowObserver? measurementObserver = null)
     {
         config.Validate();
         Directory.CreateDirectory(directory);
@@ -148,10 +149,13 @@ public sealed class MqttCampaignRunner
             }
             await PublishWindowAsync(config.WarmupSeconds, false);
             var startedUtc = DateTimeOffset.UtcNow;
-            var started = clock.Elapsed.TotalSeconds;
+            var started = Stopwatch.GetTimestamp();
+            measurementObserver?.MeasurementStarted(started, startedUtc);
             await PublishWindowAsync(config.MeasurementSeconds, true);
-            var actualSeconds = clock.Elapsed.TotalSeconds - started;
+            var ended = Stopwatch.GetTimestamp();
             var endedUtc = DateTimeOffset.UtcNow;
+            measurementObserver?.MeasurementEnded(ended, endedUtc);
+            var actualSeconds = (ended - started) / (double)Stopwatch.Frequency;
             var drainStart = clock.Elapsed.TotalSeconds;
             string? reason;
             while ((reason = DrainPolicy.Decide(ledger, drainStart, clock.Elapsed.TotalSeconds,

@@ -62,8 +62,15 @@ public class CampaignTransportTests
         using var temp = new CampaignTemp();
         var key = new CampaignKey("Mosquitto", 16, qos, 2, 1);
         var runner = new MqttCampaignRunner(TimeSpan.FromSeconds(2), TimeSpan.FromMilliseconds(30));
+        var window = new WindowObserver();
         var result = await runner.RunAsync(new CampaignDefinition { WarmupSeconds = .02, MeasurementSeconds = .12,
-            CooldownSeconds = 0, QuietPeriodSeconds = .03, DrainTimeoutSeconds = .2 }, key, broker.Uri, "test", "attempt-01", temp.Path, .5);
+            CooldownSeconds = 0, QuietPeriodSeconds = .03, DrainTimeoutSeconds = .2 }, key, broker.Uri, "test", "attempt-01", temp.Path, .5,
+            measurementObserver: window);
+        Assert.IsNotNull(window.Start, "The load-generator guard must observe the actual measurement start.");
+        Assert.IsNotNull(window.End, "The load-generator guard must observe the actual measurement end.");
+        Assert.AreEqual(result.MeasurementStartedUtc, window.Start.Value.Utc);
+        Assert.AreEqual(result.MeasurementEndedUtc, window.End.Value.Utc);
+        Assert.AreEqual(result.Measurement.ActualMeasurementSeconds, (window.End.Value.Tick - window.Start.Value.Tick) / (double)System.Diagnostics.Stopwatch.Frequency);
         Assert.IsTrue(result.Measurement.ActualMeasurementSeconds >= .12);
         Assert.IsTrue(result.Measurement.CompletedPublishes > 0);
         Assert.AreEqual(0, broker.OverwrittenMessages, "Loss-free transport fixture overflowed its broker queue. " + JsonSerializer.Serialize(result));
@@ -112,6 +119,14 @@ public class CampaignTransportTests
         Assert.IsFalse(result.Success);
         Assert.IsFalse(result.Probes.Single(x => x.Qos == 2).Subscribe);
         Assert.IsNotNull(result.Probes.Single(x => x.Qos == 2).Error);
+    }
+
+    private sealed class WindowObserver : IMeasurementWindowObserver
+    {
+        public (long Tick, DateTimeOffset Utc)? Start { get; private set; }
+        public (long Tick, DateTimeOffset Utc)? End { get; private set; }
+        public void MeasurementStarted(long tick, DateTimeOffset utc) => Start = (tick, utc);
+        public void MeasurementEnded(long tick, DateTimeOffset utc) => End = (tick, utc);
     }
 }
 

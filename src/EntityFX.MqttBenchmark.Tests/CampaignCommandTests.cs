@@ -65,13 +65,50 @@ public class CampaignCommandTests
         var options = new Dictionary<string, string?> { ["config"] = configPath, ["stand"] = fixture.InventoryPath,
             ["campaign"] = campaignPath, ["broker"] = "Mosquitto", ["max-runs"] = "2", ["stand-script"] = fixture.Script,
             ["docker-executable"] = fixture.Docker, ["benchmark-repo"] = fixture.Path };
-        await Assert.ThrowsExceptionAsync<CampaignExhaustedException>(() => CampaignCommands.ExecuteAsync("matrix", options));
+        await Assert.ThrowsExceptionAsync<CampaignExhaustedException>(() => CampaignCommands.ExecuteAsync("matrix", options,
+            loadCountersFactory: _ => new LoadGeneratorGuardTests.TestCounters()));
         var rows = CampaignJournal.ReadAttempts(campaignPath);
         Assert.AreEqual(1, rows.Count(x => x.Status == "success"));
         Assert.AreEqual(3, rows.Count(x => x.Status == "failed"));
         Assert.IsTrue(rows.All(x => x.Identity.StandSha256 == originalHash));
         Assert.AreEqual(1, Directory.GetFiles(campaignPath, "run-provenance.json", SearchOption.AllDirectories).Length);
         Assert.AreEqual(originalHash, CampaignJson.HashFile(Directory.GetFiles(campaignPath, "stand.source.json", SearchOption.AllDirectories).Single()));
+        var localTelemetry = Directory.GetFiles(campaignPath, "load-generator-summary.json", SearchOption.AllDirectories);
+        Assert.AreEqual(1, localTelemetry.Length, "Every measured attempt must have load-generator acceptance evidence.");
+        var guard = CampaignJson.Read<LoadGeneratorReport>(localTelemetry[0]);
+        Assert.IsTrue(guard.Assessment.Success);
+        var observation = rows.Single(x => x.Status == "success").Observation!;
+        Assert.AreEqual(observation.MeasurementStartedUtc, guard.Measurement!.StartedUtc);
+        Assert.AreEqual(observation.MeasurementEndedUtc, guard.Measurement.EndedUtc);
+    }
+
+    [TestMethod]
+    public async Task MatrixCommand_RetriesCpuOverloadWithoutClaimingSuccess_AndSealsLocalEvidence()
+    {
+        await using var broker = await LocalBroker.StartAsync();
+        using var fixture = new CampaignStandFixture(broker.Uri);
+        File.WriteAllText(Path.Combine(fixture.Path, "telemetry-delay"), "200");
+        InitializeRepository(fixture.Path);
+        var configPath = Path.Combine(fixture.Path, "campaign.json");
+        CampaignJson.WriteNew(configPath, new CampaignDefinition { WarmupSeconds = .05, MeasurementSeconds = .2,
+            CooldownSeconds = 0, QuietPeriodSeconds = .05, DrainTimeoutSeconds = .1 });
+        var campaignPath = Path.Combine(fixture.Path, "campaign");
+        var options = new Dictionary<string, string?> { ["config"] = configPath, ["stand"] = fixture.InventoryPath,
+            ["campaign"] = campaignPath, ["broker"] = "Mosquitto", ["max-runs"] = "1", ["stand-script"] = fixture.Script,
+            ["docker-executable"] = fixture.Docker, ["benchmark-repo"] = fixture.Path };
+        await Assert.ThrowsExceptionAsync<CampaignExhaustedException>(() => CampaignCommands.ExecuteAsync("matrix", options,
+            loadCountersFactory: _ => new LoadGeneratorGuardTests.TestCounters(overloaded: true)));
+        var rows = CampaignJournal.ReadAttempts(campaignPath); // Verifies every sealed artifact hash too.
+        Assert.AreEqual(3, rows.Count);
+        Assert.IsTrue(rows.All(x => x.Status == "failed" && x.Observation == null && x.Failure!.Contains("Load-generator guard failed")));
+        var files = Directory.GetFiles(campaignPath, "load-generator-summary.json", SearchOption.AllDirectories);
+        Assert.AreEqual(3, files.Length);
+        foreach (var file in files)
+        {
+            var report = CampaignJson.Read<LoadGeneratorReport>(file);
+            Assert.IsFalse(report.Assessment.Success);
+            Assert.AreEqual(80d, report.Assessment.Intervals.Max(x => x.CpuPercent));
+        }
     }
 
     private static void InitializeRepository(string path)
