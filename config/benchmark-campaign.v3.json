@@ -3,6 +3,12 @@
   "seed": 20260909,
   "deploymentMode": "singleHostSequential",
   "cpuMode": "singleCorePinned",
+  "networkThresholdPercentByBroker": {
+    "Aedes": 85,
+    "Mosquitto": 80,
+    "ActiveMQ": 80,
+    "EMQX": 80
+  },
   "brokers": ["Aedes", "Mosquitto", "ActiveMQ", "EMQX"],
   "messageBytes": [16, 256],
   "qos": [0, 1, 2],

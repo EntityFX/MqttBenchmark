@@ -105,7 +105,8 @@ public static class CampaignCommands
                 var telemetry = await stand.RunWithTelemetryAsync(captureSeconds, async measurementToken =>
                 {
                     await using var loadGuard = LoadGeneratorGuard.Start(stand.Endpoint, attemptPath, loadCountersFactory,
-                        cancellationToken: measurementToken);
+                        cancellationToken: measurementToken,
+                        networkThresholdPercent: config.NetworkThresholdPercentFor(key.Broker));
                     observation = await runner.RunAsync(config, key, stand.Endpoint, campaignIdentity.CampaignId,
                         key.Key + $".attempt-{number:00}", attemptPath, protocol.RttBaselineMs.Value, measurementToken, loadGuard);
                     await loadGuard.CompleteAsync();

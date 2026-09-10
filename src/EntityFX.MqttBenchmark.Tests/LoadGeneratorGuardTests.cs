@@ -58,6 +58,22 @@ public class LoadGeneratorGuardTests
     }
 
     [TestMethod]
+    public void BrokerSpecificNetworkTolerance_AcceptsAedesAtEightyFiveButKeepsOthersAtEighty()
+    {
+        var samples = new[] { Sample(0, 0), Sample(1000, 300, 51_250_000, 51_250_000),
+            Sample(2000, 600, 102_500_000, 102_500_000) };
+        var window = new MeasurementWindow(500, 1500, Epoch.AddMilliseconds(500), Epoch.AddMilliseconds(1500));
+        var config = new CampaignDefinition();
+
+        Assert.IsTrue(LoadGeneratorAssessment.Evaluate(samples, window, 1000, Nic,
+            config.NetworkThresholdPercentFor("Aedes")).Success,
+            "Aedes' approved 85% tolerance must accept an 82% interval.");
+        Assert.IsFalse(LoadGeneratorAssessment.Evaluate(samples, window, 1000, Nic,
+            config.NetworkThresholdPercentFor("Mosquitto")).Success,
+            "The other brokers must retain the 80% network gate.");
+    }
+
+    [TestMethod]
     public void OutsideMeasurementIntervalsAreExcluded_BoundaryCrossingIsNotProrated()
     {
         var samples = new[] { Sample(0, 0), Sample(1000, 0), Sample(2000, 1000), Sample(3000, 2000) };
@@ -93,7 +109,7 @@ public class LoadGeneratorGuardTests
         using var temp = new CampaignTemp();
         var clock = new ManualClock();
         await using var guard = LoadGeneratorGuard.Start(new Uri("mqtt://10.10.157.111:1883"), temp.Path,
-            _ => new TestCounters(), clock);
+            _ => new TestCounters(), clock, networkThresholdPercent: 85);
         await clock.NextDelayAsync();
         guard.MeasurementStarted(500, Epoch.AddMilliseconds(500));
         clock.Advance(1000);
@@ -109,7 +125,7 @@ public class LoadGeneratorGuardTests
         Assert.AreEqual(1500L, summary.Measurement.EndedTick);
         Assert.AreEqual(Nic, summary.Network);
         Assert.AreEqual(70d, summary.ThresholdPercent);
-        Assert.AreEqual(80d, summary.NetworkThresholdPercent);
+        Assert.AreEqual(85d, summary.NetworkThresholdPercent);
         Assert.AreEqual(3, File.ReadAllLines(Path.Combine(temp.Path, "load-generator-samples.ndjson")).Length);
         var hashes = CampaignJson.HashTree(temp.Path);
         await guard.DisposeAsync();
