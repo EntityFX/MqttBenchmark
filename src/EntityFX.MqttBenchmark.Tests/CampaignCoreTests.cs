@@ -6,6 +6,20 @@ namespace EntityFX.MqttBenchmark.Tests;
 public class CampaignCoreTests
 {
     [TestMethod]
+    public void LinkLimitedCampaign_AllowsOnlyExplicitNullAedesNetworkGate()
+    {
+        var config = new CampaignDefinition();
+        Assert.IsNull(config.NetworkThresholdPercentFor("Aedes"));
+        Assert.AreEqual(80d, config.NetworkThresholdPercentFor("Mosquitto"));
+
+        config.NetworkThresholdPercentByBroker["Mosquitto"] = null;
+        Assert.ThrowsException<InvalidDataException>(() => config.Validate());
+        config.NetworkThresholdPercentByBroker["Mosquitto"] = 80;
+        config.NetworkThresholdPercentByBroker["Aedes"] = 85;
+        Assert.ThrowsException<InvalidDataException>(() => config.Validate());
+    }
+
+    [TestMethod]
     public void Matrix_Contains288UniqueKeysAndStableSeededOrderRegardlessOfInputOrder()
     {
         var config = new CampaignDefinition();

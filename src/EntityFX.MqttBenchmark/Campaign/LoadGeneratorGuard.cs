@@ -22,7 +22,7 @@ public interface IMeasurementWindowObserver
     void MeasurementEnded(long tick, DateTimeOffset utc);
 }
 public sealed record LoadGeneratorReport(LoadGeneratorInterface? Network, MeasurementWindow? Measurement,
-    long TimestampFrequency, double ThresholdPercent, double NetworkThresholdPercent, double SamplingIntervalSeconds, double MaximumIntervalSeconds,
+    long TimestampFrequency, double ThresholdPercent, string NetworkAcceptanceMode, double? NetworkThresholdPercent, double SamplingIntervalSeconds, double MaximumIntervalSeconds,
     string AcceptanceRule, string CpuSource, string NetworkSource, LoadGeneratorAssessment Assessment);
 
 public sealed class LoadGeneratorGuard : IAsyncDisposable, IMeasurementWindowObserver
@@ -36,14 +36,14 @@ public sealed class LoadGeneratorGuard : IAsyncDisposable, IMeasurementWindowObs
     private readonly List<LoadGeneratorSample> samples = new();
     private readonly object gate = new();
     private readonly Task sampler;
-    private readonly double networkThresholdPercent;
+    private readonly double? networkThresholdPercent;
     private MeasurementWindow? measurement;
     private Exception? samplerFailure;
     private bool finished;
 
     public static LoadGeneratorGuard Start(Uri endpoint, string directory, Func<Uri, ILoadGeneratorCounters>? countersFactory = null,
         ILoadGeneratorClock? clock = null, CancellationToken cancellationToken = default,
-        double networkThresholdPercent = LoadGeneratorAssessment.NetworkThresholdPercent)
+        double? networkThresholdPercent = LoadGeneratorAssessment.NetworkThresholdPercent)
     {
         clock ??= new LoadGeneratorClock();
         CampaignJson.WriteNew(Path.Combine(directory, "load-generator-started.json"), new
@@ -68,10 +68,10 @@ public sealed class LoadGeneratorGuard : IAsyncDisposable, IMeasurementWindowObs
     }
 
     private LoadGeneratorGuard(string directory, ILoadGeneratorCounters counters, ILoadGeneratorClock clock, CancellationToken cancellationToken,
-        double networkThresholdPercent)
+        double? networkThresholdPercent)
     {
         (this.directory, this.counters, this.clock, externalCancellation) = (directory, counters, clock, cancellationToken);
-        if (!double.IsFinite(networkThresholdPercent) || networkThresholdPercent <= 0 || networkThresholdPercent > 100)
+        if (networkThresholdPercent is { } threshold && (!double.IsFinite(threshold) || threshold <= 0 || threshold > 100))
             throw new ArgumentOutOfRangeException(nameof(networkThresholdPercent));
         this.networkThresholdPercent = networkThresholdPercent;
         CampaignJson.WriteNew(Path.Combine(directory, "load-generator-provenance.json"), Report(counters.Network, null, clock.Frequency,
@@ -156,10 +156,13 @@ public sealed class LoadGeneratorGuard : IAsyncDisposable, IMeasurementWindowObs
         if (!finished) await FinishAsync(new InvalidOperationException("Attempt did not complete the load-generator guard."));
     }
     private static LoadGeneratorReport Report(LoadGeneratorInterface? network, MeasurementWindow? window, long frequency,
-        double networkThresholdPercent, LoadGeneratorAssessment assessment) =>
-        new(network, window, frequency, LoadGeneratorAssessment.CpuThresholdPercent, networkThresholdPercent,
+        double? networkThresholdPercent, LoadGeneratorAssessment assessment) =>
+        new(network, window, frequency, LoadGeneratorAssessment.CpuThresholdPercent,
+            networkThresholdPercent.HasValue ? "enforced" : "informational", networkThresholdPercent,
             1, LoadGeneratorAssessment.MaximumIntervalSeconds,
-            "max-overlapping-interval; no prorating; network=(rx+tx)/link-speed", "Windows GetSystemTimes (kernel includes idle)",
+            "max-overlapping-interval; no prorating; network=(rx+tx)/link-speed; " +
+                (networkThresholdPercent.HasValue ? "network threshold enforced" : "network informational"),
+            "Windows GetSystemTimes (kernel includes idle)",
             "OS-routed NetworkInterface cumulative byte counters", assessment);
 }
 
@@ -190,12 +193,13 @@ public sealed record LoadGeneratorAssessment(bool Success, IReadOnlyList<string>
     public const double NetworkThresholdPercent = 80;
     public const double MaximumIntervalSeconds = 1.25;
     public static LoadGeneratorAssessment Evaluate(IReadOnlyList<LoadGeneratorSample> samples, MeasurementWindow window,
-        long frequency, LoadGeneratorInterface network, double networkThresholdPercent = NetworkThresholdPercent)
+        long frequency, LoadGeneratorInterface network, double? networkThresholdPercent = NetworkThresholdPercent)
     {
         var failures = new List<string>();
         var intervals = new List<LoadGeneratorInterval>();
-        if (frequency <= 0 || network.LinkSpeedBitsPerSecond <= 0 || !double.IsFinite(networkThresholdPercent) ||
-            networkThresholdPercent <= 0 || networkThresholdPercent > 100 || window.EndedTick <= window.StartedTick ||
+        if (frequency <= 0 || network.LinkSpeedBitsPerSecond <= 0 ||
+            networkThresholdPercent is { } threshold && (!double.IsFinite(threshold) || threshold <= 0 || threshold > 100) ||
+            window.EndedTick <= window.StartedTick ||
             window.EndedUtc <= window.StartedUtc || samples.Count < 2)
             return new(false, new[] { "Invalid clock, link capacity, measurement bounds or missing samples." }, intervals);
         if (samples[0].ReadEndedTick > window.StartedTick || samples[^1].ReadStartedTick < window.EndedTick)
@@ -231,8 +235,8 @@ public sealed record LoadGeneratorAssessment(bool Success, IReadOnlyList<string>
             intervals.Add(new(previous.ReadStartedTick, current.ReadEndedTick, cpu, rx, tx, networkPercent));
             if (cpu > CpuThresholdPercent)
                 failures.Add($"Interval {i}: system CPU exceeds {CpuThresholdPercent}%.");
-            if (networkPercent > networkThresholdPercent)
-                failures.Add($"Interval {i}: combined RX+TX exceeds {networkThresholdPercent}%.");
+            if (networkThresholdPercent is { } enforcedThreshold && networkPercent > enforcedThreshold)
+                failures.Add($"Interval {i}: combined RX+TX exceeds {enforcedThreshold}%.");
         }
         if (intervals.Count == 0) failures.Add("No valid interval overlaps measurement.");
         return new(failures.Count == 0, failures, intervals);

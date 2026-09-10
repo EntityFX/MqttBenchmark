@@ -24,15 +24,15 @@ public sealed class CampaignDefinition
     public double QuietPeriodSeconds { get; set; } = 2;
     public string DeploymentMode { get; set; } = "singleHostSequential";
     public string CpuMode { get; set; } = "singleCorePinned";
-    public Dictionary<string, double> NetworkThresholdPercentByBroker { get; set; } = new(StringComparer.Ordinal)
+    public Dictionary<string, double?> NetworkThresholdPercentByBroker { get; set; } = new(StringComparer.Ordinal)
     {
-        ["Aedes"] = 85,
+        ["Aedes"] = null,
         ["Mosquitto"] = 80,
         ["ActiveMQ"] = 80,
         ["EMQX"] = 80
     };
 
-    public double NetworkThresholdPercentFor(string broker)
+    public double? NetworkThresholdPercentFor(string broker)
     {
         Validate();
         return NetworkThresholdPercentByBroker[broker];
@@ -67,9 +67,9 @@ public sealed class CampaignDefinition
             throw new InvalidDataException("Unsupported campaign deployment/CPU mode.");
         if (NetworkThresholdPercentByBroker == null || NetworkThresholdPercentByBroker.Count != Brokers.Length ||
             Brokers.Any(broker => !NetworkThresholdPercentByBroker.TryGetValue(broker, out var threshold) ||
-                !double.IsFinite(threshold) || threshold <= 0 || threshold > 100) ||
+                (broker == "Aedes" ? threshold != null : threshold == null || !double.IsFinite(threshold.Value) || threshold <= 0 || threshold > 100)) ||
             NetworkThresholdPercentByBroker.Keys.Any(broker => !Brokers.Contains(broker, StringComparer.Ordinal)))
-            throw new InvalidDataException("Every campaign broker requires one finite network threshold in (0, 100].");
+            throw new InvalidDataException("The link-limited campaign requires an informational null network gate for Aedes and a finite gate in (0, 100] for every other broker.");
     }
 
     private string Order(string key) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"{Seed}|{key}")));

@@ -4,7 +4,7 @@
   "deploymentMode": "singleHostSequential",
   "cpuMode": "singleCorePinned",
   "networkThresholdPercentByBroker": {
-    "Aedes": 85,
+    "Aedes": null,
     "Mosquitto": 80,
     "ActiveMQ": 80,
     "EMQX": 80
