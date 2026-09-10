@@ -46,14 +46,15 @@ public class LoadGeneratorGuardTests
     }
 
     [TestMethod]
-    public void NetworkUsesCombinedRxTxCapacity_AndAllowsExactlySeventyPercent()
+    public void NetworkUsesCombinedRxTxCapacity_AndHasIndependentEightyPercentLimit()
     {
-        Assert.IsTrue(Assess(Sample(0, 0), Sample(1000, 300, 43_750_000, 43_750_000),
-            Sample(2000, 600, 87_500_000, 87_500_000)).Success);
-        var result = Assess(Sample(0, 0), Sample(1000, 300, 43_750_001, 43_750_000),
-            Sample(2000, 600, 87_500_001, 87_500_000));
+        Assert.IsTrue(Assess(Sample(0, 0), Sample(1000, 300, 50_000_000, 50_000_000),
+            Sample(2000, 600, 100_000_000, 100_000_000)).Success,
+            "Network utilization at exactly 80% must pass while CPU remains below 70%.");
+        var result = Assess(Sample(0, 0), Sample(1000, 300, 50_000_001, 50_000_000),
+            Sample(2000, 600, 100_000_001, 100_000_000));
         Assert.IsFalse(result.Success);
-        Assert.IsTrue(result.Intervals[0].NetworkPercent > 70);
+        Assert.IsTrue(result.Intervals[0].NetworkPercent > 80);
     }
 
     [TestMethod]
@@ -107,6 +108,8 @@ public class LoadGeneratorGuardTests
         Assert.AreEqual(500L, summary.Measurement!.StartedTick);
         Assert.AreEqual(1500L, summary.Measurement.EndedTick);
         Assert.AreEqual(Nic, summary.Network);
+        Assert.AreEqual(70d, summary.ThresholdPercent);
+        Assert.AreEqual(80d, summary.NetworkThresholdPercent);
         Assert.AreEqual(3, File.ReadAllLines(Path.Combine(temp.Path, "load-generator-samples.ndjson")).Length);
         var hashes = CampaignJson.HashTree(temp.Path);
         await guard.DisposeAsync();

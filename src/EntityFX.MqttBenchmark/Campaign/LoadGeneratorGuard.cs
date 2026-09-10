@@ -22,7 +22,7 @@ public interface IMeasurementWindowObserver
     void MeasurementEnded(long tick, DateTimeOffset utc);
 }
 public sealed record LoadGeneratorReport(LoadGeneratorInterface? Network, MeasurementWindow? Measurement,
-    long TimestampFrequency, double ThresholdPercent, double SamplingIntervalSeconds, double MaximumIntervalSeconds,
+    long TimestampFrequency, double ThresholdPercent, double NetworkThresholdPercent, double SamplingIntervalSeconds, double MaximumIntervalSeconds,
     string AcceptanceRule, string CpuSource, string NetworkSource, LoadGeneratorAssessment Assessment);
 
 public sealed class LoadGeneratorGuard : IAsyncDisposable, IMeasurementWindowObserver
@@ -150,7 +150,8 @@ public sealed class LoadGeneratorGuard : IAsyncDisposable, IMeasurementWindowObs
         if (!finished) await FinishAsync(new InvalidOperationException("Attempt did not complete the load-generator guard."));
     }
     private static LoadGeneratorReport Report(LoadGeneratorInterface? network, MeasurementWindow? window, long frequency, LoadGeneratorAssessment assessment) =>
-        new(network, window, frequency, LoadGeneratorAssessment.ThresholdPercent, 1, LoadGeneratorAssessment.MaximumIntervalSeconds,
+        new(network, window, frequency, LoadGeneratorAssessment.CpuThresholdPercent, LoadGeneratorAssessment.NetworkThresholdPercent,
+            1, LoadGeneratorAssessment.MaximumIntervalSeconds,
             "max-overlapping-interval; no prorating; network=(rx+tx)/link-speed", "Windows GetSystemTimes (kernel includes idle)",
             "OS-routed NetworkInterface cumulative byte counters", assessment);
 }
@@ -178,7 +179,8 @@ public sealed record LoadGeneratorInterval(long StartedTick, long EndedTick, dou
     double RxBitsPerSecond, double TxBitsPerSecond, double NetworkPercent);
 public sealed record LoadGeneratorAssessment(bool Success, IReadOnlyList<string> Failures, IReadOnlyList<LoadGeneratorInterval> Intervals)
 {
-    public const double ThresholdPercent = 70;
+    public const double CpuThresholdPercent = 70;
+    public const double NetworkThresholdPercent = 80;
     public const double MaximumIntervalSeconds = 1.25;
     public static LoadGeneratorAssessment Evaluate(IReadOnlyList<LoadGeneratorSample> samples, MeasurementWindow window,
         long frequency, LoadGeneratorInterface network)
@@ -219,8 +221,10 @@ public sealed record LoadGeneratorAssessment(bool Success, IReadOnlyList<string>
             var tx = (after.SentBytes - before.SentBytes) * 8d / minSeconds;
             var networkPercent = (rx + tx) / network.LinkSpeedBitsPerSecond * 100;
             intervals.Add(new(previous.ReadStartedTick, current.ReadEndedTick, cpu, rx, tx, networkPercent));
-            if (cpu > ThresholdPercent || networkPercent > ThresholdPercent)
-                failures.Add($"Interval {i}: system CPU or combined RX+TX exceeds {ThresholdPercent}%.");
+            if (cpu > CpuThresholdPercent)
+                failures.Add($"Interval {i}: system CPU exceeds {CpuThresholdPercent}%.");
+            if (networkPercent > NetworkThresholdPercent)
+                failures.Add($"Interval {i}: combined RX+TX exceeds {NetworkThresholdPercent}%.");
         }
         if (intervals.Count == 0) failures.Add("No valid interval overlaps measurement.");
         return new(failures.Count == 0, failures, intervals);
