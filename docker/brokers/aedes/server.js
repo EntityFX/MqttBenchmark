@@ -2,7 +2,8 @@ const { Aedes } = require('aedes');
 const { createServer } = require('net');
 
 async function main() {
-  const broker = await Aedes.createBroker();
+  // Unlimited emitter concurrency avoids mqemitter's synchronous queued-release recursion under burst load.
+  const broker = await Aedes.createBroker({ concurrency: 0 });
   const server = createServer(broker.handle);
   const port = Number.parseInt(process.env.MQTT_PORT || '1883', 10);
 
