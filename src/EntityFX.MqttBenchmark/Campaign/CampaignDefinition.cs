@@ -3,11 +3,6 @@ using System.Text;
 
 namespace EntityFX.MqttBenchmark.Campaign;
 
-public sealed record CampaignKey(string Broker, int MessageBytes, int Qos, int Publishers, int Repeat)
-{
-    public string Key => $"{Broker}.m{MessageBytes}.q{Qos}.p{Publishers}.r{Repeat}";
-}
-
 public sealed class CampaignDefinition
 {
     public int SchemaVersion { get; set; } = 3;
@@ -31,6 +26,7 @@ public sealed class CampaignDefinition
         ["ActiveMQ"] = 80,
         ["EMQX"] = 80
     };
+    public double? CpuThresholdPercent { get; set; }
 
     public double? NetworkThresholdPercentFor(string broker)
     {
@@ -70,6 +66,8 @@ public sealed class CampaignDefinition
                 (broker == "Aedes" ? threshold != null : threshold == null || !double.IsFinite(threshold.Value) || threshold <= 0 || threshold > 100)) ||
             NetworkThresholdPercentByBroker.Keys.Any(broker => !Brokers.Contains(broker, StringComparer.Ordinal)))
             throw new InvalidDataException("The link-limited campaign requires an informational null network gate for Aedes and a finite gate in (0, 100] for every other broker.");
+        if (CpuThresholdPercent is { } cpuThreshold && (!double.IsFinite(cpuThreshold) || cpuThreshold <= 0 || cpuThreshold > 100))
+            throw new InvalidDataException("CpuThresholdPercent must be in (0, 100] when set; null keeps the 70% default.");
     }
 
     private string Order(string key) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"{Seed}|{key}")));

@@ -106,7 +106,8 @@ public static class CampaignCommands
                 {
                     await using var loadGuard = LoadGeneratorGuard.Start(stand.Endpoint, attemptPath, loadCountersFactory,
                         cancellationToken: measurementToken,
-                        networkThresholdPercent: config.NetworkThresholdPercentFor(key.Broker));
+                        networkThresholdPercent: config.NetworkThresholdPercentFor(key.Broker),
+                        cpuThresholdPercent: config.CpuThresholdPercent ?? LoadGeneratorAssessment.CpuThresholdPercent);
                     observation = await runner.RunAsync(config, key, stand.Endpoint, campaignIdentity.CampaignId,
                         key.Key + $".attempt-{number:00}", attemptPath, protocol.RttBaselineMs.Value, measurementToken, loadGuard);
                     await loadGuard.CompleteAsync();

@@ -46,6 +46,20 @@ public class LoadGeneratorGuardTests
     }
 
     [TestMethod]
+    public void CpuThresholdIsConfigurable_AndDefaultSeventyRemainsBinding()
+    {
+        var window = new MeasurementWindow(500, 1500, Epoch.AddMilliseconds(500), Epoch.AddMilliseconds(1500));
+        var samples = new[] { Sample(0, 0), Sample(1000, 50), Sample(2000, 150) };
+        // Two intervals at 95% and 90% CPU: above the 70% default but below a raised 100% ceiling.
+        var strict = LoadGeneratorAssessment.Evaluate(samples, window, 1000, Nic);
+        Assert.IsFalse(strict.Success, "A 95% interval must fail the default 70% CPU gate.");
+        Assert.IsTrue(strict.Failures.Any(f => f.Contains("system CPU exceeds 70%")));
+        var relaxed = LoadGeneratorAssessment.Evaluate(samples, window, 1000, Nic, null, 100);
+        Assert.IsTrue(relaxed.Success, "A config-raised 100% ceiling must not reject a 95% interval.");
+        Assert.AreEqual(95d, relaxed.Intervals.Max(x => x.CpuPercent));
+    }
+
+    [TestMethod]
     public void NetworkUsesCombinedRxTxCapacity_AndHasIndependentEightyPercentLimit()
     {
         Assert.IsTrue(Assess(Sample(0, 0), Sample(1000, 300, 50_000_000, 50_000_000),

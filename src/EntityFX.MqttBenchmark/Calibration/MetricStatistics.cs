@@ -45,22 +45,3 @@ public sealed record MetricStatistics(
             : degreesOfFreedom <= 120 ? 1.97993040505
             : 1.95996398454;
 }
-
-public sealed record LatencyQuantileStatistics(
-    MetricStatistics MinMs,
-    MetricStatistics P50Ms,
-    MetricStatistics P75Ms,
-    MetricStatistics P95Ms,
-    MetricStatistics P99Ms,
-    MetricStatistics MaxMs);
-
-public sealed record AggregatedBenchmarkPoint(
-    string Broker,
-    int MessageBytes,
-    int Qos,
-    int Clients,
-    int Repeats,
-    MetricStatistics CompletedRps,
-    MetricStatistics PublishFailureRate,
-    MetricStatistics DeliveryLossRate,
-    LatencyQuantileStatistics? ProcessingLatencyQuantiles);

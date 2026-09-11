@@ -1,16 +1,5 @@
 namespace EntityFX.MqttBenchmark.Calibration;
 
-public sealed record BenchmarkBrokerEndpoint(string Name, Uri Uri);
-
-public sealed record BenchmarkRunSpec(
-    BenchmarkBrokerEndpoint Broker,
-    int MessageBytes,
-    int Qos,
-    int Clients,
-    int Repeat,
-    double WarmupSeconds,
-    double MeasurementSeconds);
-
 public sealed class BenchmarkMatrixDefinition
 {
     public int SchemaVersion { get; set; } = 2;

@@ -1,14 +1,10 @@
 namespace EntityFX.MqttBenchmark.Calibration;
 
-public sealed record BrokerProfileDocument(
-    int SchemaVersion,
-    string CalibrationStatus,
-    DateTimeOffset GeneratedAtUtc,
+public sealed record ProfileProvenance(
     string MqttYCommitSha,
     string MqttBenchmarkCommitSha,
     IReadOnlyDictionary<string, string> InputCsvSha256,
-    int RunCount,
+    DateTimeOffset GeneratedAtUtc,
     double WarmupSeconds,
     double MeasurementSeconds,
-    int Repeats,
-    IReadOnlyList<BrokerProfileEntry> Brokers);
+    int Repeats);

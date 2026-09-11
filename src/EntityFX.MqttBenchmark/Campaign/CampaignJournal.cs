@@ -1,49 +1,4 @@
-using System.Security.Cryptography;
-using System.Text.Json;
-using EntityFX.MqttBenchmark.Calibration;
-
 namespace EntityFX.MqttBenchmark.Campaign;
-
-public sealed record CampaignIdentity(string CampaignId, string ConfigSha256, string StandSha256,
-    string DeploymentMode, string CpuMode, string MqttBenchmarkCommitSha);
-public sealed record RunObservation(CampaignKey Key, MeasurementSummary Measurement,
-    DateTimeOffset MeasurementStartedUtc, DateTimeOffset MeasurementEndedUtc,
-    string DrainReason, double DrainSeconds, double RttBaselineMs);
-public sealed record AttemptResult(CampaignIdentity Identity, CampaignKey Key, int Attempt,
-    string Status, string? Failure, RunObservation? Observation);
-public sealed record ObservationProvenance(CampaignIdentity Identity, IReadOnlyDictionary<string, string> InputSha256);
-public sealed record ObservationPoint(string Broker, int MessageBytes, int Qos, int Publishers,
-    int Repeats, MetricStatistics AttemptedRps, MetricStatistics CompletedRps,
-    MetricStatistics PublishFailureRate, MetricStatistics DeliveryLossRate,
-    LatencyQuantiles? ObservedLatencyQuantiles, LatencyQuantileStatistics? ObservedLatencyStatistics,
-    double RttBaselineMs);
-public sealed record BrokerObservations(int SchemaVersion, int RunCount, ObservationProvenance Provenance,
-    IReadOnlyList<ObservationPoint> Points);
-
-public static class CampaignJson
-{
-    public static JsonSerializerOptions Options { get; } = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true };
-    public static T Read<T>(string path) => JsonSerializer.Deserialize<T>(File.ReadAllBytes(path), Options)
-        ?? throw new InvalidDataException($"Empty JSON document: {path}");
-    public static void WriteNew<T>(string path, T value) => WriteBytesNew(path, JsonSerializer.SerializeToUtf8Bytes(value, Options));
-    public static void WriteBytesNew(string path, byte[] value)
-    {
-        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
-        using var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None);
-        stream.Write(value);
-        stream.Flush(true);
-    }
-    public static string HashBytes(byte[] bytes) => Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
-    public static string HashFile(string path) => HashBytes(File.ReadAllBytes(path));
-    public static IReadOnlyDictionary<string, string> HashTree(string root) => Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
-        .Where(p => Path.GetFileName(p) != ".lock")
-        .OrderBy(p => p, StringComparer.Ordinal).ToDictionary(p => Path.GetRelativePath(root, p).Replace('\\', '/'), HashFile, StringComparer.Ordinal);
-}
-
-public sealed class CampaignExhaustedException : IOException
-{
-    public CampaignExhaustedException(string key) : base($"Campaign stopped: {key} exhausted three attempts.") { }
-}
 
 public sealed class CampaignJournal : IDisposable
 {
@@ -167,45 +122,4 @@ public sealed class CampaignJournal : IDisposable
         m.PublishLatencyMs?.Validate();
     }
     public void Dispose() => lease.Dispose();
-}
-
-public static class CampaignAggregator
-{
-    public static BrokerObservations Aggregate(CampaignDefinition config, IEnumerable<AttemptResult> attempts,
-        IReadOnlyDictionary<string, string> hashes)
-    {
-        var expected = config.Expand().ToHashSet();
-        var all = attempts.ToArray();
-        if (all.Length == 0 || all.Select(x => x.Identity).Distinct().Count() != 1)
-            throw new InvalidDataException("Aggregation requires exactly one campaign identity/deployment/CPU mode.");
-        var identity = all[0].Identity;
-        if (identity.CpuMode != config.CpuMode || identity.DeploymentMode != config.DeploymentMode)
-            throw new InvalidDataException("Campaign modes differ from aggregation configuration.");
-        if (all.Any(x => !expected.Contains(x.Key))) throw new InvalidDataException("Unknown campaign key.");
-        var rows = all.Where(x => x.Status == "success").ToArray();
-        if (rows.Length != 288 || rows.Select(x => x.Key).Distinct().Count() != 288 || !expected.SetEquals(rows.Select(x => x.Key)))
-            throw new InvalidDataException("Aggregation requires 288/288 unique successful keys.");
-        foreach (var row in rows) CampaignJournal.ValidateObservation(row.Key,
-            row.Observation ?? throw new InvalidDataException("Successful attempt is missing observation."));
-        var points = rows.GroupBy(x => (x.Key.Broker, x.Key.MessageBytes, x.Key.Qos, x.Key.Publishers))
-            .OrderBy(g => g.Key.Broker, StringComparer.Ordinal).ThenBy(g => g.Key.MessageBytes).ThenBy(g => g.Key.Qos).ThenBy(g => g.Key.Publishers)
-            .Select(g =>
-            {
-                var measurements = g.Select(x => x.Observation!.Measurement).ToArray();
-                var latency = measurements.Select(x => x.PublishLatencyMs).ToArray();
-                MetricStatistics Latency(Func<LatencyQuantiles, double> select) => MetricStatistics.Calculate(latency.Select(x => select(x!)));
-                var stats = g.Key.Qos == 0 ? null : latency.Any(x => x == null)
-                    ? throw new InvalidDataException("QoS 1/2 requires observed completion latency for every repeat.")
-                    : new LatencyQuantileStatistics(Latency(x => x.MinMs), Latency(x => x.P50Ms), Latency(x => x.P75Ms),
-                        Latency(x => x.P95Ms), Latency(x => x.P99Ms), Latency(x => x.MaxMs));
-                return new ObservationPoint(g.Key.Broker, g.Key.MessageBytes, g.Key.Qos, g.Key.Publishers, 3,
-                    MetricStatistics.Calculate(measurements.Select(x => x.AttemptedRps)),
-                    MetricStatistics.Calculate(measurements.Select(x => x.CompletedRps)),
-                    MetricStatistics.Calculate(measurements.Select(x => x.PublishFailureRate)),
-                    MetricStatistics.Calculate(measurements.Select(x => x.DeliveryLossRate)),
-                    stats == null ? null : new LatencyQuantiles(stats.MinMs.Mean, stats.P50Ms.Mean, stats.P75Ms.Mean, stats.P95Ms.Mean, stats.P99Ms.Mean, stats.MaxMs.Mean),
-                    stats, g.Average(x => x.Observation!.RttBaselineMs));
-            }).ToArray();
-        return new(3, rows.Length, new(identity, hashes), points);
-    }
 }
