@@ -24,3 +24,4 @@ Version.cpp
 /results/raw/v3/
 /config/*.local.json
 /TestResults/
+/run-report-*/
