@@ -15,6 +15,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "EntityFX.MqttBenchmark", "E
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "EntityFX.MqttBenchmark.Cli", "EntityFX.MqttBenchmark.Cli\EntityFX.MqttBenchmark.Cli.csproj", "{77B5A840-368A-4A3D-BF7F-DB063FC2D34A}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "EntityFX.MqttBenchmark.Campaign", "EntityFX.MqttBenchmark.Campaign\EntityFX.MqttBenchmark.Campaign.csproj", "{D3E4F5A6-1B2C-4D5E-8F90-A1B2C3D4E5F6}"
+EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "EntityFX.MqttBenchmark.Tests", "EntityFX.MqttBenchmark.Tests\EntityFX.MqttBenchmark.Tests.csproj", "{BEC1EFF6-EA29-46B1-A42E-26AD7B098D5E}"
 EndProject
 Global
@@ -51,6 +53,10 @@ Global
 		{BEC1EFF6-EA29-46B1-A42E-26AD7B098D5E}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{BEC1EFF6-EA29-46B1-A42E-26AD7B098D5E}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{BEC1EFF6-EA29-46B1-A42E-26AD7B098D5E}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D3E4F5A6-1B2C-4D5E-8F90-A1B2C3D4E5F6}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D3E4F5A6-1B2C-4D5E-8F90-A1B2C3D4E5F6}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D3E4F5A6-1B2C-4D5E-8F90-A1B2C3D4E5F6}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D3E4F5A6-1B2C-4D5E-8F90-A1B2C3D4E5F6}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

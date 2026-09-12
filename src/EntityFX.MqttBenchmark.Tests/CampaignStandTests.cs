@@ -4,7 +4,7 @@ using EntityFX.MqttBenchmark.Campaign;
 namespace EntityFX.MqttBenchmark.Tests;
 
 [TestClass]
-public class CampaignStandTests
+public class CampaignStandTests : IntegrationTestBase
 {
     [TestMethod]
     public async Task StandSession_PropagatesTrustedBuildProvenanceToEveryCustomPull()

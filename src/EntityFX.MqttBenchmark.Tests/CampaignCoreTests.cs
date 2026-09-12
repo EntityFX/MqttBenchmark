@@ -6,16 +6,22 @@ namespace EntityFX.MqttBenchmark.Tests;
 public class CampaignCoreTests
 {
     [TestMethod]
-    public void LinkLimitedCampaign_AllowsOnlyExplicitNullAedesNetworkGate()
+    public void NetworkGates_AreInformationalOrNullPerBroker()
     {
         var config = new CampaignDefinition();
         Assert.IsNull(config.NetworkThresholdPercentFor("Aedes"));
         Assert.AreEqual(80d, config.NetworkThresholdPercentFor("Mosquitto"));
 
+        // A null gate (informational) or a bounded value is accepted for any broker.
         config.NetworkThresholdPercentByBroker["Mosquitto"] = null;
-        Assert.ThrowsException<InvalidDataException>(() => config.Validate());
-        config.NetworkThresholdPercentByBroker["Mosquitto"] = 80;
+        config.Validate();
         config.NetworkThresholdPercentByBroker["Aedes"] = 85;
+        config.Validate();
+
+        // A value outside (0, 100] is rejected.
+        config.NetworkThresholdPercentByBroker["Aedes"] = 0;
+        Assert.ThrowsException<InvalidDataException>(() => config.Validate());
+        config.NetworkThresholdPercentByBroker["Aedes"] = 101;
         Assert.ThrowsException<InvalidDataException>(() => config.Validate());
     }
 
@@ -31,8 +37,21 @@ public class CampaignCoreTests
         CollectionAssert.AreEqual(first, config.Expand().Select(x => x.Key).ToArray());
         Assert.AreEqual(72, config.Expand().Count(x => x.Broker == "Aedes"));
         Assert.AreEqual(3, config.Expand().Count(x => x.Broker == "EMQX" && x.MessageBytes == 256 && x.Qos == 2 && x.Publishers == 128));
-        config.Publishers = new[] { 1, 2, 64, 128 };
+        config.Publishers = new[] { 1, 0, 64, 128 };
         Assert.ThrowsException<InvalidDataException>(() => config.Expand());
+    }
+
+    [TestMethod]
+    public void CampaignDefaults_StandardIsTheSingleSourceForTheFreshDefault()
+    {
+        var standard = CampaignDefaults.Standard();
+        Assert.AreEqual(288, standard.Expand().Length);
+        Assert.IsNull(standard.NetworkThresholdPercentFor("Aedes"));
+        Assert.AreEqual(80d, standard.NetworkThresholdPercentFor("Mosquitto"));
+        // A fresh model and the named standard must agree on the matrix (single source of truth).
+        CollectionAssert.AreEqual(
+            new CampaignDefinition().Expand().Select(x => x.Key).ToArray(),
+            standard.Expand().Select(x => x.Key).ToArray());
     }
 
     [TestMethod]

@@ -5,6 +5,7 @@ param(
     [string]$OutputDirectory = 'artifacts/broker-stand',
     [ValidateRange(1, 86400)][int]$CaptureSeconds = 1,
     [ValidateRange(1, 300)][int]$HealthTimeoutSeconds = 60,
+    [ValidateRange(1, 60000)][int]$ClockAlignmentBoundMs = 3000,
     [string]$DockerExecutable = 'docker',
     [string]$TrustedBuildProvenanceDirectory
 )
@@ -296,9 +297,9 @@ function Write-ClockAlignment($Broker) {
         [ordered]@{ controllerBeforeUtc = $before.ToString('O'); controllerAfterUtc = $after.ToString('O'); remoteUtc = $remote.ToString('O'); remoteSystemTime = $raw; roundTripMs = $timer.Elapsed.TotalMilliseconds; offsetMs = $offset; uncertaintyMs = 1 + $timer.Elapsed.TotalMilliseconds / 2 + $wallDrift; controllerClockStepMs = $wallDrift }
     })
     $best = $probes | Sort-Object { $_.roundTripMs } | Select-Object -First 1
-    $ready = ([Math]::Abs($best.offsetMs) + $best.uncertaintyMs -le 3000) -and (@($probes | Where-Object { $_.controllerClockStepMs -gt 100 }).Count -eq 0)
-    Write-JsonFile ([ordered]@{ ready = $ready; thresholdMs = 3000; offsetMs = $best.offsetMs; uncertaintyMs = $best.uncertaintyMs; method = 'docker-daemon-system-time-midpoint'; clockScope = 'docker-daemon-host-realtime'; timestampResolutionBoundMs = 1; context = $context; broker = $Broker.name; containerId = $run.containerId; imageId = $run.imageId; controllerMachine = [Environment]::MachineName; probes = $probes }) (Join-Path $OutputDirectory 'clock-alignment.json')
-    if (-not $ready) { throw 'Controller/broker clock alignment is unready; see clock-alignment.json (3000 ms conservative bound). Check offsets and probe uncertainty before retrying.' }
+    $ready = ([Math]::Abs($best.offsetMs) + $best.uncertaintyMs -le $ClockAlignmentBoundMs) -and (@($probes | Where-Object { $_.controllerClockStepMs -gt 100 }).Count -eq 0)
+    Write-JsonFile ([ordered]@{ ready = $ready; thresholdMs = $ClockAlignmentBoundMs; offsetMs = $best.offsetMs; uncertaintyMs = $best.uncertaintyMs; method = 'docker-daemon-system-time-midpoint'; clockScope = 'docker-daemon-host-realtime'; timestampResolutionBoundMs = 1; context = $context; broker = $Broker.name; containerId = $run.containerId; imageId = $run.imageId; controllerMachine = [Environment]::MachineName; probes = $probes }) (Join-Path $OutputDirectory 'clock-alignment.json')
+    if (-not $ready) { throw 'Controller/broker clock alignment is unready; see clock-alignment.json ($ClockAlignmentBoundMs ms conservative bound). Check offsets and probe uncertainty before retrying.' }
 }
 
 function Write-Capture($Broker) {

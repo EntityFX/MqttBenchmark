@@ -11,7 +11,7 @@ using MQTTnet.Server;
 namespace EntityFX.MqttBenchmark.Tests;
 
 [TestClass]
-public class CampaignTransportTests
+public class CampaignTransportTests : IntegrationTestBase
 {
     [TestMethod]
     public async Task LocalBroker_QueuesBoundedQos0BurstWithoutDroppingWhenReceiverIsDelayed()

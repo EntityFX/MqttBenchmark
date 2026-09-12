@@ -7,7 +7,7 @@ using System.Text.Json.Nodes;
 namespace EntityFX.MqttBenchmark.Tests;
 
 [TestClass]
-public class BrokerStandControllerTests
+public class BrokerStandControllerTests : IntegrationTestBase
 {
     [TestMethod]
     public void Validate_RejectsInvalidIdentityEvenWithUnrelatedProvenance()

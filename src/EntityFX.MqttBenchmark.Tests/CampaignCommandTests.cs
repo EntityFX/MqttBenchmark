@@ -4,7 +4,7 @@ using System.Diagnostics;
 namespace EntityFX.MqttBenchmark.Tests;
 
 [TestClass]
-public class CampaignCommandTests
+public class CampaignCommandTests : IntegrationTestBase
 {
     [TestMethod]
     public async Task PreflightCommand_PropagatesTrustedBuildProvenanceDirectory()

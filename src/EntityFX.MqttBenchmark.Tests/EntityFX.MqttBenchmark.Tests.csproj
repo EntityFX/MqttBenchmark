@@ -14,6 +14,7 @@
   <ItemGroup>
     <ProjectReference Include="..\EntityFX.MqttBenchmark\EntityFX.MqttBenchmark.csproj" />
     <ProjectReference Include="..\EntityFX.MqttBenchmark.Bomber\EntityFX.MqttBenchmark.Bomber.csproj" />
+    <ProjectReference Include="..\EntityFX.MqttBenchmark.Campaign\EntityFX.MqttBenchmark.Campaign.csproj" />
   </ItemGroup>
   <ItemGroup>
     <Using Include="Microsoft.VisualStudio.TestTools.UnitTesting" />

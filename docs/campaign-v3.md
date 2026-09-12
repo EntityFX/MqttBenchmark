@@ -40,3 +40,60 @@ Acceptance uses the **maximum interval**, never a whole-run average: every inter
 Local evidence is separate from broker telemetry and does not change `broker-observations.v3.json`: `load-generator-started.json`, `load-generator-provenance.json`, `load-generator-samples.ndjson`, exact `load-generator-measurement-started.json`/`-ended.json`, and `load-generator-summary.json` retain interface identity/capacity, source/machine/OS, raw counters, UTC/tick brackets, frequency, measurement bounds, CPU %, RX/TX bits/s, thresholds, rules and failures. Creation is exclusive; the attempt journal seals these files only after sampler completion and writer disposal. Cancellation or workload failure preserves incomplete evidence with a failed local summary and cannot claim success. Missing final coverage times out within five seconds after the workload returns. Unit/integration tests can inject counters and a monotonic clock, but production matrix commands always use Windows counters. A preflight-only command is not a measured load test and does not establish this guard's acceptance for a later run.
 
 Aggregation verifies 288/288 unique successful keys and rejects mixed campaign, deployment, CPU, source or config identities. `broker-observations.v3.json` contains 96 points, one per broker/payload/QoS/publisher combination. Rate fields contain mean, sample standard deviation, Student-t CI95 (df=2), min, max and count. Observed latency knots are repeat means, with per-knot statistics alongside them; QoS0 knots stay null. `rttBaselineMs` is the mean of the three per-run median RTT baselines. Task 3 can consume `points[].attemptedRps.mean`, `completedRps.mean`, `publishFailureRate.mean`, `deliveryLossRate.mean`, `observedLatencyQuantiles` and `rttBaselineMs`. Processing latency and conditional simulator failure calibration are deliberately computed by MqttY. Three repeats provide limited statistical power; confidence bounds are statistical intervals and are not clamped to the physical rate range.
+
+## Full campaign run
+
+A complete run is three CLI stages over `EntityFX.MqttBenchmark.Campaign`: **preflight → matrix → aggregate**. Two configuration files stay separate by design: `benchmark-campaign.v3.json` describes *what* is measured (matrix, durations, gates, attempts), while `broker-stand.local.json` describes *where* it runs (per-broker `mqttUri`, `managementUri`, Docker context).
+
+```powershell
+# 1. Protocol readiness for every broker in the matrix (CONNECT/SUBSCRIBE/PUBLISH/loopback per QoS,
+#    RTT echoes, $SYS/broker/version). Exit code 2 on failure.
+dotnet run --project src/EntityFX.MqttBenchmark.Cli -- preflight --stand config/broker-stand.local.json `
+  --config config/benchmark-campaign.v3.json --output artifacts/preflight-001
+
+# 2. The full measurement campaign (288 keys for the standard config).
+dotnet run --project src/EntityFX.MqttBenchmark.Cli -- matrix --stand config/broker-stand.local.json `
+  --config config/benchmark-campaign.v3.json --campaign campaigns/baseline-001
+# 2b. Resume an interrupted campaign with the same inputs.
+dotnet run --project src/EntityFX.MqttBenchmark.Cli -- matrix --stand config/broker-stand.local.json `
+  --config config/benchmark-campaign.v3.json --campaign campaigns/baseline-001 --resume
+
+# 3. Aggregation into broker-observations.v3.json; requires complete coverage.
+dotnet run --project src/EntityFX.MqttBenchmark.Cli -- aggregate --config config/benchmark-campaign.v3.json `
+  --raw campaigns/baseline-001 --output artifacts/aggregate-001
+```
+
+`CampaignCommands.ExecuteAsync` parses options and the config, validates it, expands the seeded key order (`config.Expand()`), builds the identity (config/stand hashes + Git revision) and opens a journal. Per key the flow is: start the stand (pull for `customImageBrokers`, validate, start, health CONNACK, clock alignment) → protocol preflight on the broker endpoint from the stand inventory → telemetry capture (`captureSeconds` includes `telemetryCaptureReserveSeconds`) → measurement: Windows load-generator guard baseline, workload phases (warmup excluded, measurement bounded in-flight, drain, cooldown), guard completion against CPU/network gates, fence/manifest verification → immutable attempt artifacts (`started.json`, `publishes.ndjson`, `deliveries.ndjson`, `protocol.json`, `preflight.json`, `result.json`, `sha256.json`). `maxAttempts` failed attempts per key throw `CampaignExhaustedException` and stop the campaign, including later resumes. `Aggregate` verifies identity/modes, derives required coverage from `config.Expand().Length`, and produces `broker-observations.v3.json` (96 standard points with mean/stdev/CI95/min/max/count and per-repeat latency knots).
+
+## Configurable campaign settings
+
+The standard experiment is data in `benchmark-campaign.v3.json` (fallback values live in `CampaignDefaults`). Beyond the matrix dimensions and phase durations, the following knobs are part of the campaign definition and validated by `CampaignDefinition.Validate()`:
+
+| Setting | Default | Purpose |
+| --- | --- | --- |
+| `maxAttempts` | 3 | Maximum attempts per matrix key (journal retry limit); CLI `--max-attempts` overrides it. |
+| `preflightRttProbes` | 20 | Number of QoS0 echo RTT probes in protocol preflight; success requires all of them. |
+| `preflightSysWaitSeconds` | 10 | How long to wait for the first `$SYS/broker/version` response. |
+| `transportTimeoutSeconds` | 10 | Uniform MQTT transport timeout (CONNECT/SUBSCRIBE/PUBLISH/DISCONNECT and preflight echoes). |
+| `telemetryCaptureReserveSeconds` | 20 | Extra seconds added to warmup+measurement+cooldown+drain when requesting the remote sampler duration. |
+| `telemetryReadinessTimeoutSeconds` | 60 | Maximum wait for `telemetry-ready.json` before dispatching warmup. |
+| `customImageBrokers` | `["Aedes","ActiveMQ"]` | Brokers built from sources by the controller; they require pull/validate before start. |
+
+Expected key coverage is derived from `config.Expand().Length`, never hard-coded: aggregation, dry-run output and the final summary all report that value. The `Repeats` value flows into `ObservationPoint.RepeatCount`, so the aggregation shape follows the configuration as well.
+
+## Source layout (`src/EntityFX.MqttBenchmark.Campaign`)
+
+The module is split by responsibility so each class has a single clear role. All public types keep the `EntityFX.MqttBenchmark.Campaign` namespace and their previous signatures; the folder layout is organisational only.
+
+| Folder | Types | Responsibility |
+| --- | --- | --- |
+| root | `CampaignDefinition`, `CampaignDefaults`, `CampaignKey` expansion, `CampaignJournal`, `CampaignAggregator`, `CampaignJson`, `CampaignExhaustedException` | Campaign schema, validation, expansion, journal/resume, aggregation and JSON hashing helpers. |
+| `Contracts/` | `RunObservation`, `ProtocolPreflight`, `ProtocolProbe`, `LoadGeneratorCounters/Sample/Interval/Report`, `MeasurementWindow`, `AdapterHardwareEvidence`, `CampaignIdentity`, `BrokerObservations`, and other records | Immutable data shapes shared across the module and persisted as JSON artifacts. |
+| `Transport/` | `MqttTransportClient` | Low-level MQTT CONNECT/SUBSCRIBE/PUBLISH/DISCONNECT with uniform timeouts and strict result validation. No campaign business logic. |
+| `Probing/` | `MqttPreflightProbe`, `MqttCampaignRunner` (+ `IMqttCampaignRunner`, `IMqttCampaignRunnerFactory`) | Preflight probing (3 QoS loopbacks, 20 echo RTTs, `$SYS/broker/version`) and the facade that delegates to transport, probe and workload runner. |
+| `Workload/` | `CampaignWorkloadRunner`, `DeliveryLedger`, `CampaignEventLog` | The load cycle (warmup → measurement → bounded in-flight completion → drain → cooldown), delivery accounting and the public NDJSON event log. |
+| `Stand/` | `StandLifecycle`, `StandTelemetry`, `StandSession` (+ `IStandSessionFactory`) | Controller PowerShell lifecycle (pull/validate/start/health/clock/stop), telemetry capture/fence/manifest, and the session facade preserving the original API. |
+| `Guard/` | `LoadGeneratorGuard`, `WindowsLoadGeneratorCounters`, `LoadGeneratorClock`, `LoadGeneratorReportFactory`, adapter metadata providers, factory/abstraction interfaces | Windows system-counter sampling, interval acceptance, hardware evidence and report assembly for the local load-generator guard. |
+| `Commands/` | `CampaignCommands`, `CampaignCommandOptions`, `CampaignIdentityFactory`, `PreflightReportBuilder` | CLI orchestration: option parsing/validation, identity construction, preflight-report assembly and command dispatch. |
+
+Key dependency rules: `CampaignCommands` receives the runner, stand-session and load-guard factories (plus an optional counters factory) as parameters and defaults them internally, so callers keep the original signature. `MqttCampaignRunner` and `StandSession` remain the public entry points for tests and CLI consumers, delegating to the smaller classes above. Timeouts and cooldown follow the campaign configuration (`config.CooldownSeconds`) rather than transport timeouts.

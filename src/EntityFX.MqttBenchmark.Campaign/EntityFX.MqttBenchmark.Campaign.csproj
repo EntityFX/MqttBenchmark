@@ -1,15 +1,19 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <OutputType>Exe</OutputType>
     <TargetFramework>net6.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <RootNamespace>EntityFX.MqttBenchmark.Campaign</RootNamespace>
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- MQTTnet is used directly by MqttCampaignRunner; declared explicitly (also flows transitively via the core). -->
+    <PackageReference Include="MQTTnet.Extensions.ManagedClient" Version="4.3.3.952" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\EntityFX.MqttBenchmark\EntityFX.MqttBenchmark.csproj" />
-    <ProjectReference Include="..\EntityFX.MqttBenchmark.Campaign\EntityFX.MqttBenchmark.Campaign.csproj" />
   </ItemGroup>
 
 </Project>
