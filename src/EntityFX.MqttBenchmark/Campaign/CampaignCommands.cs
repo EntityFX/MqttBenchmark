@@ -23,6 +23,8 @@ public static class CampaignCommands
         int? maxRuns = null;
         if (options.TryGetValue("max-runs", out var maxValue))
             maxRuns = int.TryParse(maxValue, out var max) && max > 0 ? max : throw new ArgumentException("--max-runs must be positive.");
+        var maxAttempts = Value(options, "max-attempts", "3");
+        if (!int.TryParse(maxAttempts, out var attempts) || attempts < 1) throw new ArgumentException("--max-attempts must be a positive integer.");
         if (command == "aggregate")
         {
             var raw = Required(options, "raw");
@@ -89,7 +91,7 @@ public static class CampaignCommands
         {
             await journal.ExecuteAsync(keys, async (key, attemptPath, number, ct) =>
             {
-                Console.WriteLine($"{key.Key}, attempt {number}/3");
+                Console.WriteLine($"{key.Key}, attempt {number}/{maxAttempts}");
                 await using var stand = await StandSession.StartAsync(script, standPath, config, key.Broker,
                     Path.Combine(attemptPath, "stand"), docker, ct,
                     expectedStandSha256: campaignIdentity.StandSha256,
@@ -115,7 +117,7 @@ public static class CampaignCommands
                 var report = PreflightReport.Create(campaignIdentity, new[] { new BrokerPreflight(protocol, telemetry) });
                 CampaignJson.WriteNew(Path.Combine(attemptPath, "preflight.json"), report);
                 return observation!;
-            }, maxRuns, cancellationToken);
+            }, maxRuns, cancellationToken, maxAttempts);
         }
         Console.WriteLine($"Campaign invocation finished: {directory}. Aggregate enforces full 288/288 coverage.");
         return 0;

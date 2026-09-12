@@ -66,11 +66,11 @@ public sealed class CampaignJournal : IDisposable
     }
 
     public async Task ExecuteAsync(IEnumerable<CampaignKey> keys, Func<CampaignKey, string, int, CancellationToken, Task<RunObservation>> execute,
-        int? maxRuns = null, CancellationToken cancellationToken = default)
+        int? maxRuns = null, CancellationToken cancellationToken = default, int maxAttempts = 3)
     {
         var existing = ReadAttempts(root).ToList();
-        foreach (var exhausted in existing.GroupBy(x => x.Key).Where(x => x.Count() >= 3 && x.All(a => a.Status != "success")))
-            throw new CampaignExhaustedException(exhausted.Key.Key);
+        foreach (var exhausted in existing.GroupBy(x => x.Key).Where(x => x.Count() >= maxAttempts && x.All(a => a.Status != "success")))
+            throw new CampaignExhaustedException(exhausted.Key.Key, maxAttempts);
         var completed = 0;
         foreach (var key in keys)
         {
@@ -80,7 +80,7 @@ public sealed class CampaignJournal : IDisposable
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var number = existing.Count(x => x.Key == key) + 1;
-                if (number > 3) throw new CampaignExhaustedException(key.Key);
+                if (number > maxAttempts) throw new CampaignExhaustedException(key.Key, maxAttempts);
                 var path = Path.Combine(root, "attempts", key.Key, $"attempt-{number:00}");
                 if (Directory.Exists(path)) throw new IOException("Attempt directory already exists.");
                 Directory.CreateDirectory(path);
@@ -98,7 +98,7 @@ public sealed class CampaignJournal : IDisposable
                 CampaignJson.WriteNew(Path.Combine(path, "sha256.json"), CampaignJson.HashTree(path));
                 existing.Add(row);
                 if (row.Status == "success") { completed++; break; }
-                if (number == 3) throw new CampaignExhaustedException(key.Key);
+                if (number == maxAttempts) throw new CampaignExhaustedException(key.Key, maxAttempts);
             }
         }
     }
