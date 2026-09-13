@@ -11,12 +11,14 @@ public sealed record LoadGeneratorAssessment(bool Success, IReadOnlyList<string>
     {
         var failures = new List<string>();
         var intervals = new List<LoadGeneratorInterval>();
-        if (frequency <= 0 || network.LinkSpeedBitsPerSecond <= 0 ||
+        if (frequency <= 0 || network.LinkSpeedBitsPerSecond < 0 ||
             networkThresholdPercent is { } threshold && (!double.IsFinite(threshold) || threshold <= 0 || threshold > 100) ||
             !double.IsFinite(cpuThresholdPercent) || cpuThresholdPercent <= 0 || cpuThresholdPercent > 100 ||
             window.EndedTick <= window.StartedTick ||
             window.EndedUtc <= window.StartedUtc || samples.Count < 2)
             return new(false, new[] { "Invalid clock, link capacity, measurement bounds or missing samples." }, intervals);
+        if (network.LinkSpeedBitsPerSecond == 0 && networkThresholdPercent is not null)
+            return new(false, new[] { "Same-host loopback has no enforceable network gate; set the broker network threshold to null (informational mode)." }, intervals);
         if (samples[0].ReadEndedTick > window.StartedTick || samples[^1].ReadStartedTick < window.EndedTick)
             failures.Add("Counter samples do not bracket the entire measurement window.");
         for (var i = 1; i < samples.Count; i++)
@@ -44,13 +46,14 @@ public sealed record LoadGeneratorAssessment(bool Success, IReadOnlyList<string>
             }
             var cpu = (total - idle) / total * 100;
             // The shortest possible read-to-read time makes network utilization conservative.
+            // A zero link capacity (same-host loopback) is informational: no gate is applied.
             var rx = (after.ReceivedBytes - before.ReceivedBytes) * 8d / minSeconds;
             var tx = (after.SentBytes - before.SentBytes) * 8d / minSeconds;
-            var networkPercent = (rx + tx) / network.LinkSpeedBitsPerSecond * 100;
+            var networkPercent = network.LinkSpeedBitsPerSecond > 0 ? (rx + tx) / network.LinkSpeedBitsPerSecond * 100 : 0;
             intervals.Add(new(previous.ReadStartedTick, current.ReadEndedTick, cpu, rx, tx, networkPercent));
             if (cpu > cpuThresholdPercent)
                 failures.Add($"Interval {i}: system CPU exceeds {cpuThresholdPercent}%.");
-            if (networkThresholdPercent is { } enforcedThreshold && networkPercent > enforcedThreshold)
+            if (networkThresholdPercent is { } enforcedThreshold && network.LinkSpeedBitsPerSecond > 0 && networkPercent > enforcedThreshold)
                 failures.Add($"Interval {i}: combined RX+TX exceeds {enforcedThreshold}%.");
         }
         if (intervals.Count == 0) failures.Add("No valid interval overlaps measurement.");

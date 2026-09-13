@@ -3,7 +3,7 @@ using System.Text.Json;
 
 namespace EntityFX.MqttBenchmark.Campaign;
 
-public sealed class WindowsAdapterMetadataProvider : IWindowsAdapterMetadataProvider
+public sealed class WindowsAdapterMetadataProvider : IAdapterMetadataProvider
 {
     public const string MetadataSource = "MSFT_NetAdapter via Get-NetAdapter -IncludeHidden";
     private readonly Func<int, string> query;

@@ -26,16 +26,44 @@ public class LoadGeneratorGuardTests
     }
 
     [TestMethod]
-    public void DefaultCounterSourceFailsClosedForLoopbackAndPreservesFailureProvenance()
+    public void LoopbackUsesSameHostCounters_WithInformationalNetworkGatePolicy()
     {
-        using var temp = new CampaignTemp();
         // Route selection itself is read-only; no MQTT connection or live run is made.
-        if (OperatingSystem.IsWindows())
-            Assert.ThrowsException<InvalidDataException>(() => LoadGeneratorGuard.Start(new Uri("mqtt://127.0.0.1:1883"), temp.Path));
-        else
-            Assert.ThrowsException<PlatformNotSupportedException>(() => LoadGeneratorGuard.Start(new Uri("mqtt://127.0.0.1:1883"), temp.Path));
-        Assert.IsFalse(CampaignJson.Read<LoadGeneratorReport>(Path.Combine(temp.Path, "load-generator-summary.json")).Assessment.Success);
+        var network = LoadGeneratorGuard.CreateDefaultCounters(new Uri("mqtt://127.0.0.1:1883")).Network;
+        Assert.AreEqual(0, network.LinkSpeedBitsPerSecond, "Same-host loopback has no physical link capacity.");
+        var window = new MeasurementWindow(500, 1500, Epoch.AddMilliseconds(500), Epoch.AddMilliseconds(1500));
+        var samples = new[] { LoopSample(0, 0), LoopSample(1000, 300), LoopSample(2000, 600) };
+        Assert.IsTrue(LoadGeneratorAssessment.Evaluate(samples, window, 1000, network, null, 70).Success,
+            "A null network threshold must make the loopback network gate informational.");
+        var enforced = LoadGeneratorAssessment.Evaluate(samples, window, 1000, network, 80, 70);
+        Assert.IsFalse(enforced.Success, "An enforceable network gate on loopback must fail closed.");
+        Assert.IsTrue(enforced.Failures.Any(f => f.Contains("Same-host loopback")));
     }
+
+    [TestMethod]
+    public void SameHostCountersRequireLoopbackEndpoint_AndReadMonotonicCpu()
+    {
+        Assert.ThrowsException<InvalidDataException>(() => new SameHostLoadGeneratorCounters(new Uri("mqtt://10.10.157.111:1883")));
+        var counters = new SameHostLoadGeneratorCounters(new Uri("mqtt://localhost:1883"));
+        var first = counters.Read();
+        var second = counters.Read();
+        Assert.IsTrue(second.Idle100ns >= first.Idle100ns, "System CPU counters must be monotonic.");
+        Assert.IsTrue(second.Kernel100ns >= first.Kernel100ns && second.User100ns >= first.User100ns);
+        Assert.ThrowsException<InvalidDataException>(() => SameHostLoadGeneratorCounters.ParseProcStatCpu("cpu 1"));
+    }
+
+    [TestMethod]
+    public void ProcStatParserConvertsTicksTo100NsAndSplitsIdleKernelUser()
+    {
+        // cpu user nice system idle iowait irq softirq steal guest guest_nice
+        var (idle, kernel, user) = SameHostLoadGeneratorCounters.ParseProcStatCpu("cpu  100 200 300 400 500 600 700 800 900 1000 1100");
+        Assert.AreEqual(90_000_000UL, idle, "idle = (400+500) ticks × 100 000");
+        Assert.AreEqual(240_000_000UL, kernel, "kernel = (300+600+700+800) ticks × 100 000 (guest excluded - already in user)");
+        Assert.AreEqual(30_000_000UL, user, "user = (100+200) ticks × 100 000");
+    }
+
+    private static LoadGeneratorSample LoopSample(long tick, ulong idle) =>
+        new(tick, tick, Epoch.AddMilliseconds(tick), Epoch.AddMilliseconds(tick), new(idle, (ulong)tick, 0, 0, 0, 0));
 
     [TestMethod]
     public void CpuUsesMaximumOverlappingInterval_NotWholeRunAverage()

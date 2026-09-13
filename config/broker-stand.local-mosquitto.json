@@ -1,0 +1,18 @@
+{
+  "schemaVersion": "broker-stand.v1",
+  "deploymentMode": "singleHostSequential",
+  "cpuMode": "singleCorePinned",
+  "activeBroker": "Mosquitto",
+  "dockerContext": "default",
+  "controlInterface": "127.0.0.1",
+  "networkMode": "host",
+  "brokers": [
+    {
+      "name": "Mosquitto", "loaded": true, "serviceName": "mosquitto", "containerName": "mosquitto",
+      "mqttUri": "mqtt://127.0.0.1:1883", "singleHostMqttPort": 1883, "distributedMqttPort": 1883,
+      "managementUri": null, "image": "eclipse-mosquitto:2.1.2-alpine",
+      "digest": "sha256:6f8d8a947c506f8a2290ec65cd4bd2bc7cb4d43fb5f6271f861cb013e2ef9797", "digestProvenance": { "status": "verified", "source": "Docker Hub multi-arch manifest" },
+      "cpuset": "0", "memoryLimit": 4294967296
+    }
+  ]
+}

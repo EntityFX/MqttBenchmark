@@ -50,6 +50,20 @@ public sealed class StandLifecycle
     }
 
     /// <summary>Контекст контроллера: при distributedHosts — контекст выбранного брокера, иначе корневой.</summary>
+    /// <summary>
+    /// Имя исполняемого файла PowerShell 7 (pwsh). По умолчанию <c>pwsh</c>; переопределяется
+    /// переменной окружения <c>MQB_STAND_SHELL</c> (например, полный путь) — переносимо на
+    /// Windows и Linux, где pwsh может отсутствовать в PATH.
+    /// </summary>
+    internal static string StandShell
+    {
+        get
+        {
+            var shell = Environment.GetEnvironmentVariable("MQB_STAND_SHELL");
+            return string.IsNullOrWhiteSpace(shell) ? "pwsh" : shell;
+        }
+    }
+
     public static string ControllerContext(JsonNode inventory, JsonNode selected)
     {
         var context = inventory["deploymentMode"]?.GetValue<string>() == "distributedHosts"
@@ -64,7 +78,7 @@ public sealed class StandLifecycle
         // A second invocation must fail before it can overwrite those files or append telemetry.
         CampaignJson.WriteNew(Path.Combine(directory, "controller-" + action + "-started.json"),
             new { action, startedAtUtc = DateTimeOffset.UtcNow });
-        var info = new ProcessStartInfo("pwsh") { UseShellExecute = false, CreateNoWindow = true,
+        var info = new ProcessStartInfo(StandShell) { UseShellExecute = false, CreateNoWindow = true,
             RedirectStandardOutput = true, RedirectStandardError = true };
         foreach (var arg in new[] { "-NoProfile", "-File", script, "-Action", action, "-ConfigPath", inventory,
             "-OutputDirectory", directory, "-DockerExecutable", docker, "-CaptureSeconds", seconds.ToString(System.Globalization.CultureInfo.InvariantCulture) })

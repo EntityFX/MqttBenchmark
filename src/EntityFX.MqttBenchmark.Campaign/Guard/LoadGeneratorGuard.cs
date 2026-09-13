@@ -22,7 +22,7 @@ public sealed class LoadGeneratorGuard : IAsyncDisposable, IMeasurementWindowObs
 
     /// <summary>
     /// Старт guard'а. При наличии фабрики счётчиков (<paramref name="countersFactory"/>) используется она;
-    /// при отсутствии — стандартная реализация Windows-счётчиков (обратная совместимость).
+    /// при отсутствии — кроссплатформенная <see cref="CreateDefaultCounters"/>.
     /// </summary>
     public static LoadGeneratorGuard Start(Uri endpoint, string directory, Func<Uri, ILoadGeneratorCounters>? countersFactory = null,
         ILoadGeneratorClock? clock = null, CancellationToken cancellationToken = default,
@@ -35,13 +35,13 @@ public sealed class LoadGeneratorGuard : IAsyncDisposable, IMeasurementWindowObs
             endpoint = endpoint.GetComponents(UriComponents.HostAndPort, UriFormat.UriEscaped),
             startedUtc = clock.UtcNow, startedTick = clock.Timestamp, timestampFrequency = clock.Frequency,
             machine = Environment.MachineName, operatingSystem = System.Runtime.InteropServices.RuntimeInformation.OSDescription,
-            processId = Environment.ProcessId, counterImplementation = countersFactory == null ? typeof(WindowsLoadGeneratorCounters).FullName : "dependency-injected"
+            processId = Environment.ProcessId, counterImplementation = countersFactory == null ? "default" : "dependency-injected"
         });
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
-            // При отсутствии фабрики используется стандартная реализация Windows-счётчиков.
-            var source = (countersFactory ?? (uri => new WindowsLoadGeneratorCounters(uri)))(endpoint);
+            // При отсутствии фабрики используется кроссплатформенная реализация по умолчанию.
+            var source = (countersFactory ?? CreateDefaultCounters)(endpoint);
             return new(directory, source, clock, cancellationToken, networkThresholdPercent, cpuThresholdPercent);
         }
         catch (Exception error)
@@ -51,6 +51,24 @@ public sealed class LoadGeneratorGuard : IAsyncDisposable, IMeasurementWindowObs
                 networkThresholdPercent, cpuThresholdPercent, new(false, new[] { error.GetType().Name + ": " + error.Message }, Array.Empty<LoadGeneratorInterval>())));
             throw;
         }
+    }
+
+    /// <summary>
+    /// Кроссплатформенный выбор реализации счётчиков по адресу брокера:
+    /// loopback → <see cref="SameHostLoadGeneratorCounters"/> (информационный сетевой гейт),
+    /// иначе Windows → <see cref="WindowsLoadGeneratorCounters"/>, Linux → <see cref="UnixLoadGeneratorCounters"/>.
+    /// </summary>
+    /// <param name="endpoint">MQTT-адрес брокера (хост + порт).</param>
+    public static ILoadGeneratorCounters CreateDefaultCounters(Uri endpoint)
+    {
+        var isLoopback = System.Net.IPAddress.TryParse(endpoint.Host, out var literal)
+            ? System.Net.IPAddress.IsLoopback(literal)
+            : string.Equals(endpoint.Host, "localhost", StringComparison.OrdinalIgnoreCase);
+        if (isLoopback) return new SameHostLoadGeneratorCounters(endpoint);
+        if (OperatingSystem.IsWindows()) return new WindowsLoadGeneratorCounters(endpoint);
+        if (OperatingSystem.IsLinux()) return new UnixLoadGeneratorCounters(endpoint);
+        throw new PlatformNotSupportedException("Load-generator guard counters are not implemented for " +
+            System.Runtime.InteropServices.RuntimeInformation.OSDescription + ".");
     }
 
     private LoadGeneratorGuard(string directory, ILoadGeneratorCounters counters, ILoadGeneratorClock clock, CancellationToken cancellationToken,

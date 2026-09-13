@@ -1,28 +1,7 @@
 using System.Diagnostics;
-using System.Runtime.InteropServices;
 using System.Text.Json.Nodes;
 
 namespace EntityFX.MqttBenchmark.Campaign;
-
-/// <summary>Манифест телеметрии стенда: число сэмплов удалённого самплера и охват ресурсов.</summary>
-public sealed record TelemetryManifest(int SampleCount, string CpuScope, string NetworkScope, IReadOnlyDictionary<string, string> InputSha256);
-/// <summary>Описание среды исполнения генератора нагрузки (ОС, CPU, рантайм, частота стоп-часов).</summary>
-public sealed record BenchmarkEnvironment(string OsDescription, int ProcessorCount, string FrameworkDescription,
-    string Architecture, string MachineName, long StopwatchFrequency, DateTimeOffset CapturedAtUtc);
-/// <summary>Результат preflight одного брокера: протокольная проба и телеметрия без нагрузки.</summary>
-public sealed record BrokerPreflight(ProtocolPreflight Protocol, TelemetryManifest Telemetry);
-/// <summary>Сводный preflight-отчёт кампании: успешен, только если все брокеры прошли протокол
-/// и сняли телеметрию.</summary>
-public sealed record PreflightReport(int SchemaVersion, CampaignIdentity Identity, bool Success, BenchmarkEnvironment Environment,
-    IReadOnlyList<BrokerPreflight> Brokers)
-{
-    /// <summary>Собирает отчёт по списку брокеров; <c>Success</c> — все протоколы успешны
-    /// и все манифесты содержат хотя бы один сэмпл.</summary>
-    public static PreflightReport Create(CampaignIdentity identity, IReadOnlyList<BrokerPreflight> brokers) =>
-        new(CampaignDefaults.SchemaVersion, identity, brokers.Count > 0 && brokers.All(x => x.Protocol.Success && x.Telemetry.SampleCount > 0),
-            new(RuntimeInformation.OSDescription, System.Environment.ProcessorCount, RuntimeInformation.FrameworkDescription,
-                RuntimeInformation.ProcessArchitecture.ToString(), System.Environment.MachineName, Stopwatch.Frequency, DateTimeOffset.UtcNow), brokers);
-}
 
 /// <summary>
 /// Фасад сессии стенда: сохраняет прежний публичный API и сигнатуры, но делегирует
@@ -84,8 +63,9 @@ public sealed class StandSession : IAsyncDisposable
         var selectedPath = Path.Combine(output, "stand.selected.json");
         var trusted = string.IsNullOrWhiteSpace(trustedBuildProvenanceDirectory)
             ? null : Path.GetFullPath(trustedBuildProvenanceDirectory);
+        var runtime = selected["runtime"]?.GetValue<string>();
         var lifecycle = new StandLifecycle(Path.GetFullPath(script), selectedPath, output, dockerExecutable, trusted);
-        var session = new StandSession(lifecycle, new StandTelemetry(lifecycle, selectedPath, output), output,
+        var session = new StandSession(lifecycle, new StandTelemetry(lifecycle, selectedPath, output, StandTelemetry.CpuScopeForRuntime(runtime)), output,
             new Uri(selected["mqttUri"]!.GetValue<string>()),
             TimeSpan.FromSeconds(config.TelemetryReadinessTimeoutSeconds));
         try
@@ -171,9 +151,11 @@ public sealed class StandSession : IAsyncDisposable
             var ready = JsonNode.Parse(File.ReadAllText(Path.Combine(output, "telemetry-ready.json")))!;
             var endTime = end["lastSampleMonotonicSeconds"]!.GetValue<double>();
             var fenceTime = fence["monotonicSeconds"]!.GetValue<double>();
-            if (!double.IsFinite(endTime) || !double.IsFinite(fenceTime) || endTime <= fenceTime ||
-                end["containerId"]!.GetValue<string>() != fence["containerId"]!.GetValue<string>() ||
-                ready["containerId"]!.GetValue<string>() != fence["containerId"]!.GetValue<string>())
+            if (end["unitId"] == null || fence["unitId"] == null || ready["unitId"] == null ||
+                end["unitId"]!.GetValue<string>() != fence["unitId"]!.GetValue<string>() ||
+                ready["unitId"]!.GetValue<string>() != fence["unitId"]!.GetValue<string>())
+                throw new InvalidDataException("Sampler, workload fence and telemetry ready records do not belong to one broker unit.");
+            if (!double.IsFinite(endTime) || !double.IsFinite(fenceTime) || endTime <= fenceTime)
                 throw new InvalidDataException("Telemetry does not cover the remote workload completion fence.");
             // Fence and capture writers are both finished before hashing their immutable evidence.
             return telemetry.WriteTelemetryManifest(sampleCount);

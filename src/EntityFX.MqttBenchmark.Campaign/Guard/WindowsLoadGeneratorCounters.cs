@@ -11,7 +11,7 @@ public sealed class WindowsLoadGeneratorCounters : ILoadGeneratorCounters
     private readonly IPAddress destination;
     public LoadGeneratorInterface Network { get; }
 
-    public WindowsLoadGeneratorCounters(Uri endpoint, IWindowsAdapterMetadataProvider? metadataProvider = null)
+    public WindowsLoadGeneratorCounters(Uri endpoint, IAdapterMetadataProvider? metadataProvider = null)
     {
         if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("Matrix load-generator guard requires Windows system counters.");
         // GetSystemTimes covers the calling processor group, not every group on a >64-CPU host.
@@ -37,7 +37,7 @@ public sealed class WindowsLoadGeneratorCounters : ILoadGeneratorCounters
     }
 
     public static LoadGeneratorInterface SelectInterface(int routeIndex, IReadOnlyList<LoadGeneratorInterface> interfaces,
-        IWindowsAdapterMetadataProvider? metadataProvider = null)
+        IAdapterMetadataProvider? metadataProvider = null)
     {
         var matches = interfaces.Where(x => x.Index == routeIndex).ToArray();
         if (matches.Length != 1 || matches[0].LinkSpeedBitsPerSecond <= 0 || matches[0].InterfaceType is "Loopback" or "Tunnel")

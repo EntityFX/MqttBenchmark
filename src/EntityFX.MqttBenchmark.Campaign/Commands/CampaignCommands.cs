@@ -89,6 +89,7 @@ public static class CampaignCommands
             // Reservation is never replaced, including failed/partial preflight executions.
             CampaignJson.WriteNew(Path.Combine(parsed.Directory, "preflight-started.json"), campaignIdentity);
             var reports = new List<BrokerPreflight>();
+            var standInventory = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllBytes(parsed.StandPath))!;
             foreach (var name in keys.Select(x => x.Broker).Distinct())
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -108,7 +109,10 @@ public static class CampaignCommands
                 {
                     var failure = new ProtocolPreflight(name, false, Array.Empty<ProtocolProbe>(), Array.Empty<double>(),
                         null, null, "unavailable", "Stand/preflight failure: " + error.Message);
-                    reports.Add(new(failure, new(0, "container-cgroup", "host-shared", new Dictionary<string, string>())));
+                    var brokerNode = standInventory["brokers"]!.AsArray().Single(x => x!["name"]!.GetValue<string>() == name)!;
+                    reports.Add(new(failure, new TelemetryManifest(0,
+                        StandTelemetry.CpuScopeForRuntime(brokerNode["runtime"]?.GetValue<string>()),
+                        StandTelemetry.NetworkScope, new Dictionary<string, string>())));
                 }
             }
             var report = PreflightReportBuilder.Build(campaignIdentity, reports);
@@ -141,7 +145,7 @@ public static class CampaignCommands
                 var telemetry = await stand.RunWithTelemetryAsync(captureSeconds, async measurementToken =>
                 {
                     await using var loadGuard = guardFactory.Create(stand.Endpoint, attemptPath,
-                        loadCountersFactory ?? (uri => new WindowsLoadGeneratorCounters(uri)),
+                        loadCountersFactory ?? LoadGeneratorGuard.CreateDefaultCounters,
                         cancellationToken: measurementToken,
                         networkThresholdPercent: config.NetworkThresholdPercentFor(key.Broker),
                         cpuThresholdPercent: config.CpuThresholdPercent ?? LoadGeneratorAssessment.CpuThresholdPercent);

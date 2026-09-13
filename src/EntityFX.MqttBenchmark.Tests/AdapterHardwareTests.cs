@@ -86,7 +86,7 @@ public class AdapterHardwareTests
         Assert.ThrowsException<InvalidDataException>(() => new WindowsAdapterMetadataProvider(_ => json).Read(39));
     }
 
-    private sealed class MetadataProvider : IWindowsAdapterMetadataProvider
+    private sealed class MetadataProvider : IAdapterMetadataProvider
     {
         private readonly AdapterHardwareEvidence metadata;
         private readonly bool fail;

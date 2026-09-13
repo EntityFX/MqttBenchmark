@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 2,
+  "brokers": [
+    { "name": "Mosquitto", "uri": "mqtt://127.0.0.1:1883" }
+  ],
+  "messageBytes": [16, 256],
+  "qos": [0, 1, 2],
+  "clients": [1, 16, 64, 128],
+  "warmupSeconds": 5,
+  "measurementSeconds": 30,
+  "repeats": 3
+}

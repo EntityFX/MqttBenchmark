@@ -1,0 +1,24 @@
+{
+  "schemaVersion": "broker-stand.v1",
+  "deploymentMode": "singleHostSequential",
+  "cpuMode": "singleCorePinned",
+  "activeBroker": "Mosquitto",
+  "dockerContext": "native-local",
+  "controlInterface": "127.0.0.1",
+  "networkMode": "host",
+  "brokers": [
+    {
+      "name": "Mosquitto", "loaded": true, "serviceName": "mosquitto", "containerName": "mosquitto",
+      "runtime": "native",
+      "mqttUri": "mqtt://127.0.0.1:1883", "singleHostMqttPort": 1883, "distributedMqttPort": 1883,
+      "managementUri": null,
+      "executable": "C:/mosquitto/mosquitto.exe",
+      "executableSha256": null,
+      "args": ["-c", "C:/projects/EntityFx.Iot/MqttBenchmark/docker/brokers/mosquitto/mosquitto.local.conf"],
+      "configFiles": ["C:/projects/EntityFx.Iot/MqttBenchmark/docker/brokers/mosquitto/mosquitto.local.conf"],
+      "logFile": "mosquitto.log",
+      "versionArgs": ["-h"],
+      "cpuset": "0", "memoryLimit": 4294967296
+    }
+  ]
+}

@@ -3,22 +3,6 @@ using EntityFX.MqttBenchmark.Calibration;
 namespace EntityFX.MqttBenchmark.Campaign;
 
 /// <summary>
-/// Итоговая сводка измерения одного прогона: счётчики публикаций/доставок, наблюдаемая
-/// длительность и (для QoS 1/2) распределение латентности завершения. Производные метрики —
-/// RPS, частота ошибок публикации и потерь доставки.
-/// </summary>
-public sealed record MeasurementSummary(long AttemptedPublishes, long CompletedPublishes,
-    long FailedPublishes, long UniqueDeliveries, long DuplicateDeliveries, long UnexpectedDeliveries,
-    long DeliveredAfterFailedPublish, long CompletedIdsDelivered, double ActualMeasurementSeconds,
-    LatencyQuantiles? PublishLatencyMs, string LatencyStatus, IReadOnlyDictionary<string, long> ErrorReasons)
-{
-    public double AttemptedRps => AttemptedPublishes / ActualMeasurementSeconds;
-    public double CompletedRps => CompletedPublishes / ActualMeasurementSeconds;
-    public double PublishFailureRate => AttemptedPublishes == 0 ? 0 : FailedPublishes / (double)AttemptedPublishes;
-    public double DeliveryLossRate => CompletedPublishes == 0 ? 0 : 1 - CompletedIdsDelivered / (double)CompletedPublishes;
-}
-
-/// <summary>
 /// Потокобезопасный реестр публикаций и доставок одного прогона. Контракт:
 /// каждая публикация получает ровно один вызов <see cref="Attempt"/> и ровно одно завершение
 /// (<see cref="Complete"/> или <see cref="Fail"/>); доставки приходят по подписанному идентификатору
@@ -103,31 +87,5 @@ public sealed class DeliveryLedger
                 qos == 0 ? "notApplicable" : completed.Length == 0 ? "unobserved" : "observed",
                 failed.GroupBy(x => x.Value.Error ?? "unknown").ToDictionary(x => x.Key, x => x.LongCount()));
         }
-    }
-}
-
-/// <summary>
-/// Политика завершения drain-фазы: продолжаем ожидание доставок, пока они идут, и прекращаем
-/// при полной доставке, превышении таймаута или тишине (quiet period) после последней доставки.
-/// </summary>
-public static class DrainPolicy
-{
-    /// <summary>
-    /// Принимает решение о завершении drain на текущий момент времени.
-    /// </summary>
-    /// <param name="ledger">Реестр публикаций/доставок прогона.</param>
-    /// <param name="start">Монотонное время начала drain.</param>
-    /// <param name="now">Текущее монотонное время.</param>
-    /// <param name="quiet">Период тишины: прекращаем, если после последней доставки прошло больше.</param>
-    /// <param name="timeout">Жёсткий таймаут drain от <paramref name="start"/>.</param>
-    /// <returns>Причина завершения: <c>allCompletedDelivered</c>, <c>timeout</c>, <c>quietPeriod</c>,
-    /// либо <c>null</c> — продолжаем ожидание.</returns>
-    public static string? Decide(DeliveryLedger ledger, double start, double now, double quiet, double timeout)
-    {
-        var state = ledger.DrainState();
-        if (state.AllDelivered) return "allCompletedDelivered";
-        if (now - start >= timeout) return "timeout";
-        if (now - Math.Max(start, state.LastDelivery) >= quiet) return "quietPeriod";
-        return null;
     }
 }
