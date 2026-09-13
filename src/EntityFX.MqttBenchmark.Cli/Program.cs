@@ -17,10 +17,18 @@ internal static class Cli
         try
         {
             var options = Parse(args.Skip(1).ToArray());
+            if (args[0] == "monitor")
+            {
+                using var cancellation = new CancellationTokenSource();
+                Console.CancelKeyPress += (_, eventArgs) => { eventArgs.Cancel = true; cancellation.Cancel(); };
+                return await CampaignMonitor.RunAsync(options, cancellation.Token);
+            }
             if (args[0] == "preflight" || (options.TryGetValue("config", out var configPath) &&
                 !string.IsNullOrWhiteSpace(configPath) && IsV3(configPath)))
             {
                 using var cancellation = new CancellationTokenSource();
+            Console.WriteLine("  monitor --campaigns <campaigns-root> [--prefix <p>] [--total <n>] [--per-broker <n>] [--run-start <local-time>] [--interval <s>] [--once]");
+
                 Console.CancelKeyPress += (_, eventArgs) => { eventArgs.Cancel = true; cancellation.Cancel(); };
                 return await CampaignCommands.ExecuteAsync(args[0], options, cancellation.Token);
             }
