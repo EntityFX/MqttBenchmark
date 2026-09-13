@@ -18,7 +18,13 @@ public static class CampaignJson
     }
     public static string HashBytes(byte[] bytes) => Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
     public static string HashFile(string path) => HashBytes(File.ReadAllBytes(path));
+    /// <summary>
+    /// Хэш-дерево артефактов каталога. Исключения: <c>.lock</c> (lease-файлы) и каталог
+    /// <c>logs/</c> — живые stdout/stderr нативного брокера, открытые его процессом и
+    /// недопустимые для атомарного снапшота во время измерения.
+    /// </summary>
     public static IReadOnlyDictionary<string, string> HashTree(string root) => Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
         .Where(p => Path.GetFileName(p) != ".lock")
+        .Where(p => !Path.GetRelativePath(root, p).Replace('\\', '/').StartsWith("logs/", StringComparison.Ordinal))
         .OrderBy(p => p, StringComparer.Ordinal).ToDictionary(p => Path.GetRelativePath(root, p).Replace('\\', '/'), HashFile, StringComparer.Ordinal);
 }

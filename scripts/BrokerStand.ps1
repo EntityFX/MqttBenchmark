@@ -50,7 +50,8 @@ function Test-Inventory($Inventory) {
         $runtime = if ($broker.Contains('runtime') -and $broker.runtime) { [string]$broker.runtime } else { 'container' }
         if ($runtime -notin @('container', 'native')) { throw "Unsupported broker runtime '$runtime' for broker '$name'." }
         if ($runtime -eq 'native') {
-            if (Is-Custom $broker) { throw "Native runtime is not supported for custom-image broker '$name'." }
+            # Native brokers run a local executable: the container "custom image" build concept does
+            # not apply (no image is built or pulled), so Aedes/ActiveMQ are legal here too.
             if (-not $broker.Contains('executable') -or [string]::IsNullOrWhiteSpace([string]$broker.executable) -or -not [IO.Path]::IsPathRooted([string]$broker.executable)) { throw "Broker '$name' requires an absolute native executable path." }
             $sha = if ($broker.Contains('executableSha256')) { [string]$broker.executableSha256 } else { '' }
             if ($sha -cnotmatch '^[0-9a-f]{64}$' -or $sha -cmatch '^(.)\1{63}$') { throw "Broker '$name' requires a pinned executableSha256 (run scripts/PinNativeExecutable.ps1)." }
