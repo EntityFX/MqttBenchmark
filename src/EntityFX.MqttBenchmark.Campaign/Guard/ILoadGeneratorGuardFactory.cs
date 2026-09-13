@@ -19,12 +19,14 @@ public interface ILoadGeneratorGuardFactory
     /// <param name="cancellationToken">Токен отмены; прерывает сэмплирование.</param>
     /// <param name="networkThresholdPercent">Порог утилизации сети в процентах; <c>null</c> — информационный режим.</param>
     /// <param name="cpuThresholdPercent">Порог утилизации CPU в процентах.</param>
+    /// <param name="maximumIntervalSeconds">Максимально допустимый интервал между сэмплами счётчиков, секунды.</param>
     /// <returns>Активный guard (реализует <see cref="IMeasurementWindowObserver"/>); требует
     /// <see cref="LoadGeneratorGuard.CompleteAsync"/> и освобождения через <c>DisposeAsync</c>.</returns>
     LoadGeneratorGuard Create(Uri endpoint, string directory, Func<Uri, ILoadGeneratorCounters> countersFactory,
         ILoadGeneratorClock? clock = null, CancellationToken cancellationToken = default,
         double? networkThresholdPercent = LoadGeneratorAssessment.NetworkThresholdPercent,
-        double cpuThresholdPercent = LoadGeneratorAssessment.CpuThresholdPercent);
+        double cpuThresholdPercent = LoadGeneratorAssessment.CpuThresholdPercent,
+        double maximumIntervalSeconds = LoadGeneratorAssessment.MaximumIntervalSeconds);
 }
 
 /// <summary>Реализация по умолчанию — делегирует <see cref="LoadGeneratorGuard.Start(Uri,string,Func{Uri,ILoadGeneratorCounters},ILoadGeneratorClock,CancellationToken,double?,double)"/>.</summary>
@@ -34,7 +36,8 @@ public sealed class DefaultLoadGeneratorGuardFactory : ILoadGeneratorGuardFactor
     public LoadGeneratorGuard Create(Uri endpoint, string directory, Func<Uri, ILoadGeneratorCounters> countersFactory,
         ILoadGeneratorClock? clock = null, CancellationToken cancellationToken = default,
         double? networkThresholdPercent = LoadGeneratorAssessment.NetworkThresholdPercent,
-        double cpuThresholdPercent = LoadGeneratorAssessment.CpuThresholdPercent) =>
+        double cpuThresholdPercent = LoadGeneratorAssessment.CpuThresholdPercent,
+        double maximumIntervalSeconds = LoadGeneratorAssessment.MaximumIntervalSeconds) =>
         LoadGeneratorGuard.Start(endpoint, directory, countersFactory, clock, cancellationToken,
-            networkThresholdPercent, cpuThresholdPercent);
+            networkThresholdPercent, cpuThresholdPercent, maximumIntervalSeconds);
 }

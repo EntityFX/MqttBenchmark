@@ -148,7 +148,8 @@ public static class CampaignCommands
                         loadCountersFactory ?? LoadGeneratorGuard.CreateDefaultCounters,
                         cancellationToken: measurementToken,
                         networkThresholdPercent: config.NetworkThresholdPercentFor(key.Broker),
-                        cpuThresholdPercent: config.CpuThresholdPercent ?? LoadGeneratorAssessment.CpuThresholdPercent);
+                        cpuThresholdPercent: config.CpuThresholdPercent ?? LoadGeneratorAssessment.CpuThresholdPercent,
+                        maximumIntervalSeconds: config.MaximumGuardIntervalSeconds ?? LoadGeneratorAssessment.MaximumIntervalSeconds);
                     observation = await runner.RunAsync(config, key, stand.Endpoint, campaignIdentity.CampaignId,
                         key.Key + $".attempt-{number:00}", attemptPath, protocol.RttBaselineMs.Value, measurementToken, loadGuard);
                     await loadGuard.CompleteAsync();

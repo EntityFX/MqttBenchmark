@@ -16,6 +16,7 @@ public sealed class LoadGeneratorGuard : IAsyncDisposable, IMeasurementWindowObs
     private readonly Task sampler;
     private readonly double? networkThresholdPercent;
     private readonly double cpuThresholdPercent;
+    private readonly double maximumIntervalSeconds;
     private MeasurementWindow? measurement;
     private Exception? samplerFailure;
     private bool finished;
@@ -27,7 +28,8 @@ public sealed class LoadGeneratorGuard : IAsyncDisposable, IMeasurementWindowObs
     public static LoadGeneratorGuard Start(Uri endpoint, string directory, Func<Uri, ILoadGeneratorCounters>? countersFactory = null,
         ILoadGeneratorClock? clock = null, CancellationToken cancellationToken = default,
         double? networkThresholdPercent = LoadGeneratorAssessment.NetworkThresholdPercent,
-        double cpuThresholdPercent = LoadGeneratorAssessment.CpuThresholdPercent)
+        double cpuThresholdPercent = LoadGeneratorAssessment.CpuThresholdPercent,
+        double maximumIntervalSeconds = LoadGeneratorAssessment.MaximumIntervalSeconds)
     {
         clock ??= new LoadGeneratorClock();
         CampaignJson.WriteNew(Path.Combine(directory, "load-generator-started.json"), new
@@ -42,13 +44,14 @@ public sealed class LoadGeneratorGuard : IAsyncDisposable, IMeasurementWindowObs
             cancellationToken.ThrowIfCancellationRequested();
             // При отсутствии фабрики используется кроссплатформенная реализация по умолчанию.
             var source = (countersFactory ?? CreateDefaultCounters)(endpoint);
-            return new(directory, source, clock, cancellationToken, networkThresholdPercent, cpuThresholdPercent);
+            return new(directory, source, clock, cancellationToken, networkThresholdPercent, cpuThresholdPercent, maximumIntervalSeconds);
         }
         catch (Exception error)
         {
             CampaignJson.WriteNew(Path.Combine(directory, "load-generator-summary.json"), LoadGeneratorReportFactory.Create(
                 (error as LoadGeneratorHardwareException)?.Network, null, clock.Frequency,
-                networkThresholdPercent, cpuThresholdPercent, new(false, new[] { error.GetType().Name + ": " + error.Message }, Array.Empty<LoadGeneratorInterval>())));
+                networkThresholdPercent, cpuThresholdPercent, new(false, new[] { error.GetType().Name + ": " + error.Message }, Array.Empty<LoadGeneratorInterval>()),
+                maximumIntervalSeconds));
             throw;
         }
     }
@@ -72,18 +75,22 @@ public sealed class LoadGeneratorGuard : IAsyncDisposable, IMeasurementWindowObs
     }
 
     private LoadGeneratorGuard(string directory, ILoadGeneratorCounters counters, ILoadGeneratorClock clock, CancellationToken cancellationToken,
-        double? networkThresholdPercent, double cpuThresholdPercent)
+        double? networkThresholdPercent, double cpuThresholdPercent, double maximumIntervalSeconds)
     {
         (this.directory, this.counters, this.clock, externalCancellation) = (directory, counters, clock, cancellationToken);
         if (networkThresholdPercent is { } threshold && (!double.IsFinite(threshold) || threshold <= 0 || threshold > 100))
             throw new ArgumentOutOfRangeException(nameof(networkThresholdPercent));
         if (!double.IsFinite(cpuThresholdPercent) || cpuThresholdPercent <= 0 || cpuThresholdPercent > 100)
             throw new ArgumentOutOfRangeException(nameof(cpuThresholdPercent));
+        if (!double.IsFinite(maximumIntervalSeconds) || maximumIntervalSeconds <= 0)
+            throw new ArgumentOutOfRangeException(nameof(maximumIntervalSeconds));
         this.networkThresholdPercent = networkThresholdPercent;
         this.cpuThresholdPercent = cpuThresholdPercent;
+        this.maximumIntervalSeconds = maximumIntervalSeconds;
         CampaignJson.WriteNew(Path.Combine(directory, "load-generator-provenance.json"), LoadGeneratorReportFactory.Create(
             counters.Network, null, clock.Frequency, networkThresholdPercent, cpuThresholdPercent,
-            new(false, new[] { "Sampling has not completed." }, Array.Empty<LoadGeneratorInterval>())));
+            new(false, new[] { "Sampling has not completed." }, Array.Empty<LoadGeneratorInterval>()),
+            maximumIntervalSeconds));
         stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         writer = new(new FileStream(Path.Combine(directory, "load-generator-samples.ndjson"), FileMode.CreateNew, FileAccess.Write,
             FileShare.Read), new UTF8Encoding(false)) { AutoFlush = true };
@@ -152,12 +159,12 @@ public sealed class LoadGeneratorGuard : IAsyncDisposable, IMeasurementWindowObs
         stop.Dispose();
         finished = true;
         var result = measurement == null ? new LoadGeneratorAssessment(false, new[] { "Missing measurement window." }, Array.Empty<LoadGeneratorInterval>())
-            : LoadGeneratorAssessment.Evaluate(samples, measurement, clock.Frequency, counters.Network, networkThresholdPercent, cpuThresholdPercent);
+            : LoadGeneratorAssessment.Evaluate(samples, measurement, clock.Frequency, counters.Network, networkThresholdPercent, cpuThresholdPercent, maximumIntervalSeconds);
         var failure = error ?? samplerFailure;
         if (failure != null) result = result with { Success = false, Failures = result.Failures.Append(failure.GetType().Name + ": " + failure.Message).ToArray() };
         if (externalCancellation.IsCancellationRequested) result = result with { Success = false, Failures = result.Failures.Append("Cancelled.").ToArray() };
         CampaignJson.WriteNew(Path.Combine(directory, "load-generator-summary.json"), LoadGeneratorReportFactory.Create(
-            counters.Network, measurement, clock.Frequency, networkThresholdPercent, cpuThresholdPercent, result));
+            counters.Network, measurement, clock.Frequency, networkThresholdPercent, cpuThresholdPercent, result, maximumIntervalSeconds));
         return result;
     }
     public async ValueTask DisposeAsync()

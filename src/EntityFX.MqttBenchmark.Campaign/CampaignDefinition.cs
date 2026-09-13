@@ -49,6 +49,8 @@ public sealed class CampaignDefinition
 
     public Dictionary<string, double?> NetworkThresholdPercentByBroker { get; set; } = CampaignDefaults.CreateNetworkThresholds(CampaignDefaults.Brokers);
     public double? CpuThresholdPercent { get; set; }
+    /// <summary>Максимально допустимый интервал между сэмплами load-generator guard'а, секунды; null сохраняет дефолт 1.25 с.</summary>
+    public double? MaximumGuardIntervalSeconds { get; set; }
 
     /// <summary>Возвращает сетевой порог (в процентах) для брокера; <c>null</c> означает
     /// информационный режим (без принудительного ограничения). Требует валидной конфигурации.</summary>
@@ -125,6 +127,8 @@ public sealed class CampaignDefinition
             throw new InvalidDataException("Every broker must declare either a null (informational) network gate or a finite gate in (0, 100].");
         if (CpuThresholdPercent is { } cpuThreshold && (!double.IsFinite(cpuThreshold) || cpuThreshold <= 0 || cpuThreshold > 100))
             throw new InvalidDataException("CpuThresholdPercent must be in (0, 100] when set; null keeps the 70% default.");
+        if (MaximumGuardIntervalSeconds is { } maxInterval && (!double.IsFinite(maxInterval) || maxInterval <= 0))
+            throw new InvalidDataException("MaximumGuardIntervalSeconds must be finite and positive when set; null keeps the 1.25 s default.");
     }
 
     private string Order(string key) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"{Seed}|{key}")));

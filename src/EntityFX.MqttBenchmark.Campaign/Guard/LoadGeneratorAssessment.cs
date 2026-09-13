@@ -7,8 +7,10 @@ public sealed record LoadGeneratorAssessment(bool Success, IReadOnlyList<string>
     public const double MaximumIntervalSeconds = 1.25;
     public static LoadGeneratorAssessment Evaluate(IReadOnlyList<LoadGeneratorSample> samples, MeasurementWindow window,
         long frequency, LoadGeneratorInterface network, double? networkThresholdPercent = NetworkThresholdPercent,
-        double cpuThresholdPercent = CpuThresholdPercent)
+        double cpuThresholdPercent = CpuThresholdPercent, double maximumIntervalSeconds = MaximumIntervalSeconds)
     {
+        if (maximumIntervalSeconds <= 0)
+            throw new ArgumentOutOfRangeException(nameof(maximumIntervalSeconds));
         var failures = new List<string>();
         var intervals = new List<LoadGeneratorInterval>();
         if (frequency <= 0 || network.LinkSpeedBitsPerSecond < 0 ||
@@ -29,7 +31,7 @@ public sealed record LoadGeneratorAssessment(bool Success, IReadOnlyList<string>
             var minSeconds = (current.ReadStartedTick - previous.ReadEndedTick) / (double)frequency;
             var maxSeconds = (current.ReadEndedTick - previous.ReadStartedTick) / (double)frequency;
             if (previous.ReadEndedTick < previous.ReadStartedTick || current.ReadEndedTick < current.ReadStartedTick ||
-                minSeconds <= 0 || maxSeconds > MaximumIntervalSeconds ||
+                minSeconds <= 0 || maxSeconds > maximumIntervalSeconds ||
                 before.LinkSpeedBitsPerSecond != network.LinkSpeedBitsPerSecond || after.LinkSpeedBitsPerSecond != network.LinkSpeedBitsPerSecond ||
                 after.Idle100ns < before.Idle100ns || after.Kernel100ns < before.Kernel100ns || after.User100ns < before.User100ns ||
                 after.ReceivedBytes < before.ReceivedBytes || after.SentBytes < before.SentBytes)
