@@ -9,6 +9,7 @@ namespace EntityFX.MqttBenchmark.Campaign;
 public sealed class WindowsLoadGeneratorCounters : ILoadGeneratorCounters
 {
     private readonly IPAddress destination;
+    private readonly NetworkInterface adapter;
     public LoadGeneratorInterface Network { get; }
 
     public WindowsLoadGeneratorCounters(Uri endpoint, IAdapterMetadataProvider? metadataProvider = null)
@@ -21,13 +22,16 @@ public sealed class WindowsLoadGeneratorCounters : ILoadGeneratorCounters
         destination = addresses[0];
         if (IPAddress.IsLoopback(destination)) throw new InvalidDataException("A loopback route cannot establish remote load-generator network capacity.");
         Network = SelectInterface(RouteIndex(), AvailableInterfaces().Select(Describe).ToArray(), metadataProvider ?? new WindowsAdapterMetadataProvider());
+        // Кэшируем адаптер один раз: полный обход GetAllNetworkInterfaces на каждом сэмпле
+        // (каждую секунду) под нагрузкой добавлял сотни мс к чтению и повышал шанс sampling gap.
+        adapter = AvailableInterfaces().SingleOrDefault(x => x.Id == Network.Id)
+            ?? throw new IOException("Routed network interface disappeared or is down.");
     }
 
     public LoadGeneratorCounters Read()
     {
         if (RouteIndex() != Network.Index) throw new IOException("Broker route changed during load-generator sampling.");
-        var adapter = AvailableInterfaces().SingleOrDefault(x => x.Id == Network.Id)
-            ?? throw new IOException("Routed network interface disappeared or is down.");
+        if (adapter.OperationalStatus != OperationalStatus.Up) throw new IOException("Routed network interface disappeared or is down.");
         if (adapter.Speed != Network.LinkSpeedBitsPerSecond) throw new IOException("Routed network link capacity changed.");
         if (!GetSystemTimes(out var idle, out var kernel, out var user)) throw new Win32Exception(Marshal.GetLastWin32Error(), "GetSystemTimes failed.");
         var statistics = adapter.GetIPStatistics();

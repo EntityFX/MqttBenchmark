@@ -17,7 +17,8 @@ public sealed record CampaignCommandOptions(
     string? TrustedBuildProvenanceDirectory,
     string Directory,
     string? RawDirectory,
-    string? OutputDirectory)
+    string? OutputDirectory,
+    double? MaximumGuardInterval)
 {
     public static CampaignCommandOptions Parse(string command, IReadOnlyDictionary<string, string?> options)
     {
@@ -32,6 +33,14 @@ public sealed record CampaignCommandOptions(
         if (options.TryGetValue("max-attempts", out var attemptsValue) && !string.IsNullOrWhiteSpace(attemptsValue))
             maxAttempts = int.TryParse(attemptsValue, out var attempts) && attempts >= 1
                 ? attempts : throw new ArgumentException("--max-attempts must be a positive integer.");
+        // Null means "use the campaign configuration"; a CLI value overrides it. The override
+        // keeps the config bytes (and therefore the journal identity hash) unchanged, so a
+        // resumed campaign can be re-run with a different guard interval.
+        double? maximumGuardInterval = null;
+        if (options.TryGetValue("maximum-guard-interval", out var intervalValue) && !string.IsNullOrWhiteSpace(intervalValue))
+            maximumGuardInterval = double.TryParse(intervalValue, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var interval) && interval > 0 && double.IsFinite(interval)
+                ? interval : throw new ArgumentException("--maximum-guard-interval must be a positive number of seconds.");
         var directory = Path.GetFullPath(Required(options, command == "matrix" ? "campaign" : "output"));
         return new(configPath, broker, maxRuns, maxAttempts,
             Required(options, "stand"),
@@ -41,7 +50,8 @@ public sealed record CampaignCommandOptions(
             options.TryGetValue("trusted-build-provenance", out var trustedValue) && !string.IsNullOrWhiteSpace(trustedValue) ? trustedValue : null,
             directory,
             options.TryGetValue("raw", out var rawValue) ? rawValue : null,
-            options.TryGetValue("output", out var outputValue) ? outputValue : null);
+            options.TryGetValue("output", out var outputValue) ? outputValue : null,
+            maximumGuardInterval);
     }
 
     private static string Required(IReadOnlyDictionary<string, string?> options, string key) =>

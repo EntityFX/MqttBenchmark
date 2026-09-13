@@ -96,7 +96,24 @@ public sealed class LoadGeneratorGuard : IAsyncDisposable, IMeasurementWindowObs
             FileShare.Read), new UTF8Encoding(false)) { AutoFlush = true };
         try { ReadSample(); }
         catch { writer.Dispose(); stop.Dispose(); throw; }
-        sampler = SampleAsync();
+        // Сэмплер живёт на выделенном фоне-потоке (не на thread pool): под пиковой нагрузкой
+        // генератора нагрузка на пул потоков и паузы GC могли откладывать callback таймера
+        // на секунды, что guard классифицировал как sampling gap и отклонял попытку.
+        sampler = StartDedicatedSamplerThread(() => SampleAsync());
+    }
+
+    private static Task StartDedicatedSamplerThread(Func<Task> work)
+    {
+        var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var thread = new Thread(() =>
+        {
+            try { work().GetAwaiter().GetResult(); completion.TrySetResult(true); }
+            catch (Exception error) { completion.TrySetException(error); }
+        })
+        { IsBackground = true, Name = "load-generator-sampler" };
+        thread.Priority = ThreadPriority.AboveNormal;
+        thread.Start();
+        return completion.Task;
     }
 
     public void MeasurementStarted(long tick, DateTimeOffset utc)
