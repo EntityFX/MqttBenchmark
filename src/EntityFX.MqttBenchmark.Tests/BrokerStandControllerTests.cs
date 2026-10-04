@@ -432,7 +432,7 @@ public class BrokerStandControllerTests : IntegrationTestBase
         var repositoryRoot = RepositoryRoot().Replace("'", "''");
         var escaped = argument.Replace("'", "''");
         var program = $"$script:RepositoryRoot = '{repositoryRoot}'\n{definition}\nWrite-Output (({name} '{escaped}'))";
-        var info = new ProcessStartInfo(StandShellForTests) { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
+        var info = new ProcessStartInfo(StandShell) { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
         foreach (var arg in new[] { "-NoProfile", "-Command", program }) info.ArgumentList.Add(arg);
         using var process = Process.Start(info)!;
         var output = process.StandardOutput.ReadToEnd();
@@ -447,7 +447,7 @@ public class BrokerStandControllerTests : IntegrationTestBase
     }
 
     /// <summary>Тот же выбор оболочки, что и в StandLifecycle: pwsh, переопределяемый MQB_STAND_SHELL.</summary>
-    private static string StandShellForTests =>
+    private static string StandShell =>
         Environment.GetEnvironmentVariable("MQB_STAND_SHELL") is { Length: > 0 } shell ? shell : "pwsh";
 
     private sealed class StandFixture : IDisposable
@@ -528,7 +528,9 @@ public class BrokerStandControllerTests : IntegrationTestBase
         private (int code, string output, string error) Run(string action, int seconds)
         {
             Save();
-            var info = new ProcessStartInfo("pwsh") { UseShellExecute = false, RedirectStandardError = true, RedirectStandardOutput = true };
+            // Honour MQB_STAND_SHELL exactly as StandLifecycle does: on a host where pwsh is not on PATH
+// (the normal Linux case) every controller test would otherwise fail to launch the shell.
+            var info = new ProcessStartInfo(StandShell) { UseShellExecute = false, RedirectStandardError = true, RedirectStandardOutput = true };
             foreach (var arg in new[] { "-NoProfile", "-File", Path.Combine(Directory, "BrokerStand.ps1"), "-Action", action,
                 "-ConfigPath", Path.Combine(Directory, "stand.json"), "-OutputDirectory", Directory,
                 "-DockerExecutable", Path.Combine(Directory, "docker.ps1"), "-CaptureSeconds", seconds.ToString() }) info.ArgumentList.Add(arg);

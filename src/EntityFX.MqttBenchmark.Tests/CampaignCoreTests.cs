@@ -25,6 +25,30 @@ public class CampaignCoreTests
         Assert.ThrowsException<InvalidDataException>(() => config.Validate());
     }
 
+    /// <summary>
+    /// Регрессия: <c>Validate</c> требовал строго положительный <c>CooldownSeconds</c>, хотя раннер
+    /// трактует эту фазу как необязательную («ровно из конфигурации, Validate гарантирует
+    /// неотрицательность»). Прогоны без cooldown оказывались неконструируемыми, а транспортные
+    /// интеграционные тесты с <c>CooldownSeconds = 0</c> падали — и оставались незамеченными,
+    /// поскольку интеграционные тесты по умолчанию пропускаются.
+    /// </summary>
+    [TestMethod]
+    public void CooldownMayBeOmittedButNeverNegative()
+    {
+        var config = new CampaignDefinition { CooldownSeconds = 0 };
+        config.Validate();
+        config.CooldownSeconds = 5;
+        config.Validate();
+        config.CooldownSeconds = -1;
+        Assert.ThrowsException<InvalidDataException>(() => config.Validate());
+        config.CooldownSeconds = double.NaN;
+        Assert.ThrowsException<InvalidDataException>(() => config.Validate());
+        // The remaining phases stay strictly positive.
+        config.CooldownSeconds = 0;
+        config.MeasurementSeconds = 0;
+        Assert.ThrowsException<InvalidDataException>(() => config.Validate());
+    }
+
     [TestMethod]
     public void Matrix_Contains288UniqueKeysAndStableSeededOrderRegardlessOfInputOrder()
     {

@@ -89,6 +89,25 @@ public class CampaignTransportTests : IntegrationTestBase
     }
 
     [TestMethod]
+    public async Task RunFlushesBufferedDeliveriesBeforeTheAttemptIsSealed()
+    {
+        await using var broker = await LocalBroker.StartAsync();
+        using var temp = new CampaignTemp();
+        var key = new CampaignKey("Mosquitto", 16, 2, 4, 1);
+        var result = await new MqttCampaignRunner(TimeSpan.FromSeconds(2), TimeSpan.FromMilliseconds(30))
+            .RunAsync(new CampaignDefinition { WarmupSeconds = .02, MeasurementSeconds = .3,
+                CooldownSeconds = 0, QuietPeriodSeconds = .05, DrainTimeoutSeconds = 1 }, key, broker.Uri,
+                "test", "attempt-01", temp.Path, .5);
+        // Buffered writes must be on disk by the time RunAsync returns, otherwise the SHA-256 seal
+        // of the attempt directory would not cover the delivery evidence.
+        var lines = File.ReadAllLines(System.IO.Path.Combine(temp.Path, "deliveries.ndjson"));
+        Assert.AreEqual(result.Measurement.UniqueDeliveries + result.Measurement.DuplicateDeliveries, lines.Length,
+            "Every delivery counted in the ledger must also be present in the flushed evidence.");
+        foreach (var line in lines)
+            Assert.IsTrue(JsonDocument.Parse(line).RootElement.TryGetProperty("id", out _));
+    }
+
+    [TestMethod]
     public async Task Preflight_ProbesEachQosAnd20EchoRttsWithoutInventingHiddenSysVersion()
     {
         await using var broker = await LocalBroker.StartAsync();

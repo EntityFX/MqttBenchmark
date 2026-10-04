@@ -25,7 +25,11 @@ public sealed class CampaignWorkloadRunner
         config.Validate();
         Directory.CreateDirectory(directory);
         using var publishLog = new CampaignEventLog(Path.Combine(directory, "publishes.ndjson"));
-        using var deliveryLog = new CampaignEventLog(Path.Combine(directory, "deliveries.ndjson"));
+        // Доставки журналируются буферизованно: обработчик ниже вызывается из сетевого callback'а
+        // MQTT-клиента, и синхронная запись на диск под замком ограничивала приёмник
+        // величиной ~1 тыс. записей/с. Из-за этого измеренный deliveryLossRate отражал
+        // пропускную способность стенда, а не потери брокера.
+        await using var deliveryLog = new BufferedEventLog(Path.Combine(directory, "deliveries.ndjson"));
         var clients = new List<IMqttClient>();
         using var subscriber = transport.CreateClient();
         var ledger = new DeliveryLedger();

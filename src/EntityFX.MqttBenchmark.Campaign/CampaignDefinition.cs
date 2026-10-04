@@ -108,10 +108,15 @@ public sealed class CampaignDefinition
             throw new InvalidDataException("MaxAttempts must be at least 1.");
         if (PreflightRttProbes < 1)
             throw new InvalidDataException("PreflightRttProbes must be at least 1.");
-        if (new[] { WarmupSeconds, MeasurementSeconds, CooldownSeconds, DrainTimeoutSeconds, QuietPeriodSeconds,
+        if (new[] { WarmupSeconds, MeasurementSeconds, DrainTimeoutSeconds, QuietPeriodSeconds,
             PreflightSysWaitSeconds, TransportTimeoutSeconds, TelemetryCaptureReserveSeconds, TelemetryReadinessTimeoutSeconds }
             .Any(x => !double.IsFinite(x) || x <= 0))
             throw new InvalidDataException("Campaign durations and timeouts must be finite and positive.");
+        // Cooldown is the only phase a campaign may legitimately omit: zero means "no cooldown".
+        // The runner already treats it as non-negative, so demanding a positive value here
+        // contradicted that contract and made every cooldown-free run unconstructible.
+        if (!double.IsFinite(CooldownSeconds) || CooldownSeconds < 0)
+            throw new InvalidDataException("CooldownSeconds must be finite and non-negative.");
         if (MeasurementSeconds <= 0 || QuietPeriodSeconds <= 0 || DrainTimeoutSeconds < QuietPeriodSeconds)
             throw new InvalidDataException("Campaign durations must be finite and the drain timeout must cover the quiet period.");
         if (CustomImageBrokers == null || CustomImageBrokers.Any(string.IsNullOrWhiteSpace) ||
