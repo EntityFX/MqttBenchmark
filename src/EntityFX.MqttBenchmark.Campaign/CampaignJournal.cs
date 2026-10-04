@@ -27,11 +27,14 @@ public sealed class CampaignJournal : IDisposable
     /// <param name="resume"><c>true</c> — продолжить прерванный прогон: манифест <c>campaign.json</c> обязан
     /// совпасть с <paramref name="identity"/>; <c>false</c> — новый прогон: каталог обязан быть пустым
     /// (кроме <c>.lock</c>), после чего в него записывается манифест.</param>
+    /// <param name="maximumAttempts">Бюджет попыток, которым записана кампания; используется как
+    /// верхняя граница номера попытки при чтении истории.</param>
     /// <returns>Открытый журнал, владеющий lock-файлом.</returns>
     /// <exception cref="IOException">Каталог не пуст при новом прогоне, либо lock занят другим процессом.</exception>
     /// <exception cref="InvalidDataException">Идентичность <paramref name="identity"/> не совпадает с манифестом
     /// или с ранее записанными попытками (повреждённая/чужая история).</exception>
-    public static CampaignJournal Open(string directory, CampaignIdentity identity, bool resume)
+    public static CampaignJournal Open(string directory, CampaignIdentity identity, bool resume,
+        int maximumAttempts = CampaignDefaults.MaxAttempts)
     {
         var root = Path.GetFullPath(directory);
         Directory.CreateDirectory(root);
@@ -50,7 +53,7 @@ public sealed class CampaignJournal : IDisposable
                     throw new IOException("Campaign directory already exists; use --resume with the same inputs.");
                 CampaignJson.WriteNew(manifest, identity);
             }
-            var rows = ReadAttempts(root);
+            var rows = ReadAttempts(root, maximumAttempts);
             if (rows.Any(x => x.Identity != identity)) throw new InvalidDataException("Attempt belongs to a different campaign identity.");
             return new(root, identity, lease);
         }
@@ -62,11 +65,16 @@ public sealed class CampaignJournal : IDisposable
     /// (используется агрегатором и командами для предварительного анализа).
     /// </summary>
     /// <param name="directory">Каталог результатов кампании.</param>
+    /// <param name="maximumAttempts">Верхняя граница номера попытки. Должна совпадать с бюджетом,
+    /// которым записана кампания: иначе корректная история (например, после
+    /// <c>--max-attempts 8</c>) была бы отвергнута как невалидная. По умолчанию —
+    /// <see cref="CampaignDefaults.MaxAttempts"/>.</param>
     /// <returns>Список попыток в порядке обхода ключей и номеров попыток. Прерванные попытки
     /// возвращаются со статусом <c>interrupted</c> и причиной <c>"Attempt was not sealed."</c>.</returns>
     /// <exception cref="InvalidDataException">История попыток не подряд (пропущен номер), выходит за
     /// ожидаемый формат, либо хеш-верификация <c>sha256.json</c> не прошла (файлы изменены после записи).</exception>
-    public static IReadOnlyList<AttemptResult> ReadAttempts(string directory)
+    public static IReadOnlyList<AttemptResult> ReadAttempts(string directory,
+        int maximumAttempts = CampaignDefaults.MaxAttempts)
     {
         var rows = new List<AttemptResult>();
         var attemptsRoot = Path.Combine(directory, "attempts");
@@ -77,7 +85,7 @@ public sealed class CampaignJournal : IDisposable
             foreach (var attemptDirectory in Directory.EnumerateDirectories(keyDirectory).OrderBy(x => x, StringComparer.Ordinal))
             {
                 var start = CampaignJson.Read<AttemptResult>(Path.Combine(attemptDirectory, "started.json"));
-                if (start.Attempt != ++previous || start.Attempt > 3 || Path.GetFileName(keyDirectory) != start.Key.Key ||
+                if (start.Attempt != ++previous || start.Attempt > maximumAttempts || Path.GetFileName(keyDirectory) != start.Key.Key ||
                     Path.GetFileName(attemptDirectory) != $"attempt-{start.Attempt:00}" || start.Status != "started")
                     throw new InvalidDataException("Invalid or non-contiguous attempt history.");
                 var resultPath = Path.Combine(attemptDirectory, "result.json");
@@ -121,7 +129,7 @@ public sealed class CampaignJournal : IDisposable
     public async Task ExecuteAsync(IEnumerable<CampaignKey> keys, Func<CampaignKey, string, int, CancellationToken, Task<RunObservation>> execute,
         int? maxRuns = null, CancellationToken cancellationToken = default, int maxAttempts = CampaignDefaults.MaxAttempts)
     {
-        var existing = ReadAttempts(root).ToList();
+        var existing = ReadAttempts(root, maxAttempts).ToList();
         foreach (var exhausted in existing.GroupBy(x => x.Key).Where(x => x.Count() >= maxAttempts && x.All(a => a.Status != "success")))
             throw new CampaignExhaustedException(exhausted.Key.Key, maxAttempts);
         var completed = 0;

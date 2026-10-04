@@ -27,6 +27,9 @@ dotnet run --project src/EntityFX.MqttBenchmark.Cli -- preflight \
 Set `MQB_STAND_SHELL` if `pwsh` is not on `PATH`. Full instructions, including the portable
 `${MqttBenchmarkRoot}` path token, are in [DEPLOYMENT.md](DEPLOYMENT.md).
 
+A complete 72-key Mosquitto run in this profile (Mosquitto 2.0.15, no Docker) and the
+analysis of its results are in [docs/mosquitto-local-run-analysis.md](docs/mosquitto-local-run-analysis.md).
+
 ## Legacy schema v2
 
 The reproducible calibration pipeline is driven by

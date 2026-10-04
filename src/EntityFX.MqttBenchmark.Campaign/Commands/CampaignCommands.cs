@@ -66,8 +66,11 @@ public static class CampaignCommands
             if (parsed.OutputDirectory == null) throw new ArgumentException("Missing --output.");
             var identity = CampaignJson.Read<CampaignIdentity>(Path.Combine(parsed.RawDirectory, "campaign.json"));
             if (identity.ConfigSha256 != configHash) throw new InvalidDataException("Aggregation configuration hash differs from campaign input.");
-            using var journal = CampaignJournal.Open(parsed.RawDirectory, identity, true);
-            var result = CampaignAggregator.Aggregate(config, CampaignJournal.ReadAttempts(parsed.RawDirectory), CampaignJson.HashTree(parsed.RawDirectory));
+            // The same attempt budget that wrote the campaign must bound its history, otherwise a
+            // legitimate `--max-attempts N` (N > 3) campaign would be rejected as non-contiguous.
+            var attemptBudget = parsed.MaxAttempts ?? config.MaxAttempts;
+            using var journal = CampaignJournal.Open(parsed.RawDirectory, identity, true, attemptBudget);
+            var result = CampaignAggregator.Aggregate(config, CampaignJournal.ReadAttempts(parsed.RawDirectory, attemptBudget), CampaignJson.HashTree(parsed.RawDirectory));
             CampaignJson.WriteNew(Path.Combine(parsed.OutputDirectory, "broker-observations.v3.json"), result);
             Console.WriteLine($"Aggregated {result.RunCount}/{config.Expand().Length} successful keys into {parsed.OutputDirectory}.");
             return 0;

@@ -139,6 +139,28 @@ public class CampaignArtifactTests
         Assert.ThrowsException<InvalidDataException>(() => CampaignAggregator.Aggregate(config, remaining.Append(invalidSuccess), new Dictionary<string, string>()));
     }
 
+    /// <summary>
+    /// Регрессия: <c>--max-attempts</c> документирован как настраиваемый, но <c>ReadAttempts</c> жёстко
+    /// ограничивал номер попытки тройкой. Кампания, записанная с <c>--max-attempts 8</c>, поэтому
+    /// содержала корректную историю, которую агрегатор отвергал как «non-contiguous».
+    /// </summary>
+    [TestMethod]
+    public async Task AttemptBudgetAboveTheDefaultIsReadableWhenItMatchesTheCampaign()
+    {
+        using var temp = new CampaignTemp();
+        var config = new CampaignDefinition();
+        var key = config.Expand().First(x => x.Qos == 0);
+        using (var journal = CampaignJournal.Open(temp.Path, Identity(), false))
+            await Assert.ThrowsExceptionAsync<CampaignExhaustedException>(() => journal.ExecuteAsync(new[] { key },
+                (k, path, number, ct) => Task.FromResult(ZeroCompletions(k)), maxAttempts: 6));
+        // The six-attempt history must be readable when the reader is given the same budget...
+        var history = CampaignJournal.ReadAttempts(temp.Path, 6);
+        Assert.AreEqual(6, history.Count);
+        Assert.IsTrue(history.All(x => x.Status == "failed"));
+        // ...and still rejected by the default budget, so a wrong budget cannot silently pass.
+        Assert.ThrowsException<InvalidDataException>(() => CampaignJournal.ReadAttempts(temp.Path));
+    }
+
     [DataTestMethod]
     [DataRow(1)] [DataRow(2)]
     public async Task ZeroCompletions_ThirdFailureStopsLaterKeysAndFutureResume(int qos)
