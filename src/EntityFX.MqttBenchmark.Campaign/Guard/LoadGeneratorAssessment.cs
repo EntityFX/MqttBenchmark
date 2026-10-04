@@ -40,6 +40,10 @@ public sealed record LoadGeneratorAssessment(bool Success, IReadOnlyList<string>
                 continue;
             }
             var idle = (double)(after.Idle100ns - before.Idle100ns);
+            // Windows GetSystemTimes counts idle inside kernel time, so the counters contract keeps
+            // kernel inclusive of idle and the denominator is kernel + user. Linux /proc/stat reports idle
+            // separately, so ParseProcStatCpu folds it into kernel to present the same convention;
+            // otherwise idle exceeded the total and every Linux interval failed as invalid counters.
             var total = (double)(after.Kernel100ns - before.Kernel100ns) + (after.User100ns - before.User100ns);
             if (total <= 0 || idle > total)
             {

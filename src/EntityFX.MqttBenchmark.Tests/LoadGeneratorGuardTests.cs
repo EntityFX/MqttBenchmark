@@ -53,17 +53,48 @@ public class LoadGeneratorGuardTests
     }
 
     [TestMethod]
-    public void ProcStatParserConvertsTicksTo100NsAndSplitsIdleKernelUser()
+    public void ProcStatParserConvertsTicksTo100NsAndKeepsIdleInsideKernel()
     {
         // cpu user nice system idle iowait irq softirq steal guest guest_nice
         var (idle, kernel, user) = SameHostLoadGeneratorCounters.ParseProcStatCpu("cpu  100 200 300 400 500 600 700 800 900 1000 1100");
         Assert.AreEqual(90_000_000UL, idle, "idle = (400+500) ticks × 100 000");
-        Assert.AreEqual(240_000_000UL, kernel, "kernel = (300+600+700+800) ticks × 100 000 (guest excluded - already in user)");
+        // kernel carries idle so that the assessment denominator (kernel + user) equals elapsed CPU time.
+        Assert.AreEqual(330_000_000UL, kernel, "kernel = (300+600+700+800 idle-inclusive 400+500) ticks × 100 000 (guest excluded - already in user)");
         Assert.AreEqual(30_000_000UL, user, "user = (100+200) ticks × 100 000");
     }
 
     private static LoadGeneratorSample LoopSample(long tick, ulong idle) =>
         new(tick, tick, Epoch.AddMilliseconds(tick), Epoch.AddMilliseconds(tick), new(idle, (ulong)tick, 0, 0, 0, 0));
+
+    /// <summary>
+    /// Регрессия: Windows GetSystemTimes считает idle частью kernel, а Linux /proc/stat отдаёт idle
+    /// отдельным полем. Знаменатель CPU = kernel + user, поэтому парсер обязан включать idle в kernel;
+    /// иначе на Linux idle превышал знаменатель и КАЖДЫЙ интервал падал с «invalid system CPU
+    /// counters» — ни один Linux-прогон не мог завершиться успешно.
+    /// </summary>
+    [TestMethod]
+    public void CpuDenominatorIncludesIdleSoLinuxProcStatCountersAreValid()
+    {
+        // Реальная геометрия /proc/stat за секунду: user +255, system +28, idle +2115 (24 ядра).
+        var (idleA, kernelA, userA) = SameHostLoadGeneratorCounters.ParseProcStatCpu("cpu  1756556 903 231340 52797263 10012 0 0 0");
+        var (idleB, kernelB, userB) = SameHostLoadGeneratorCounters.ParseProcStatCpu("cpu  1756811 903 231368 52799378 10012 0 0 0");
+        var idle = idleB - idleA;
+        var total = (kernelB - kernelA) + (userB - userA);
+        Assert.IsTrue(idle <= total, "idle must fit inside the kernel+user denominator.");
+        var busy = total - idle;
+        Assert.IsTrue(busy >= 0 && busy < total, "A mostly idle machine yields busy < total.");
+
+        var first = new LoadGeneratorSample(0, 0, Epoch, Epoch, new(idleA, kernelA, userA, 0, 0, 0));
+        var second = new LoadGeneratorSample(1000, 1000, Epoch.AddSeconds(1), Epoch.AddSeconds(1),
+            new(idleB, kernelB, userB, 0, 0, 0));
+        var result = LoadGeneratorAssessment.Evaluate(new[] { first, second },
+            new(100, 1000, Epoch.AddMilliseconds(100), Epoch.AddMilliseconds(1000)), 1000,
+            new LoadGeneratorInterface("same-host", "loopback", "same-host", 0, 0, "mqtt://127.0.0.1:1883", "Loopback",
+                new(0, "same-host", true, false, "test", Epoch)), null, 100);
+        Assert.IsTrue(result.Success, string.Join("; ", result.Failures));
+        Assert.AreEqual(1, result.Intervals.Count);
+        Assert.AreEqual(busy / (double)total * 100, result.Intervals[0].CpuPercent, 0.001);
+    }
 
     [TestMethod]
     public void CpuUsesMaximumOverlappingInterval_NotWholeRunAverage()

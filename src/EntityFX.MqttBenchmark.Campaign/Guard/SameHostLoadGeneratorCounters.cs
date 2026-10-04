@@ -52,7 +52,8 @@ public sealed class SameHostLoadGeneratorCounters : ILoadGeneratorCounters
 
     /// <summary>
     /// Системный CPU Windows в единицах 100 нс (idle, kernel, user) через <c>GetSystemTimes</c>.
-    /// Кросспроцессная монотонность гарантирована ядром.
+    /// Кросспроцессная монотонность гарантирована ядром. Контракт счётчиков задаёт kernel
+    /// ВКЛЮЧАТЕЛЬНО idle (как в самом GetSystemTimes), поэтому знаменатель CPU = kernel + user.
     /// </summary>
     internal static (ulong idle, ulong kernel, ulong user) ReadWindowsSystemCpu100Ns()
     {
@@ -65,8 +66,8 @@ public sealed class SameHostLoadGeneratorCounters : ILoadGeneratorCounters
 
     /// <summary>
     /// Системный CPU Linux в единицах 100 нс (idle, kernel, user) по агрегированной строке
-    /// <c>/proc/stat</c>. Гостевое время (guest/guest_nice) уже учтено в user/system — двойной
-    /// учёт исключён.
+    /// <c>/proc/stat</c>; kernel включает idle, как и в Windows-контракте. Гостевое время
+    /// (guest/guest_nice) уже учтено в user/system — двойной учёт исключён.
     /// </summary>
     internal static (ulong idle, ulong kernel, ulong user) ReadUnixSystemCpu100Ns()
     {
@@ -75,7 +76,12 @@ public sealed class SameHostLoadGeneratorCounters : ILoadGeneratorCounters
         return ParseProcStatCpu(line);
     }
 
-    /// <summary>Чистый парсер строки <c>/proc/stat</c>: ticks → 100 нс (idle, kernel, user).</summary>
+    /// <summary>Чистый парсер строки <c>/proc/stat</c>: ticks → 100 нс (idle, kernel, user).
+    /// Контракт счётчиков требует kernel ВКЛЮЧАТЕЛЬНО idle (как в Windows GetSystemTimes), поэтому
+    /// idle и iowait добавляются к system/irq/softirq/steal. Без этого idle превышал знаменатель
+    /// kernel + user, и Linux-измерение отбрасывалось как «invalid system CPU counters».
+    /// Гостевое время (guest/guest_nice) уже учтено в user/system — двойной учёт исключён.
+    /// </summary>
     public static (ulong idle, ulong kernel, ulong user) ParseProcStatCpu(string line)
     {
         var parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
@@ -86,8 +92,9 @@ public sealed class SameHostLoadGeneratorCounters : ILoadGeneratorCounters
             return value;
         }
         var user = (Value(1) + Value(2)) * UnixTicksPer100Ns;                       // user + nice
-        var system = (Value(3) + Value(6) + Value(7) + (parts.Length > 8 ? Value(8) : 0)) * UnixTicksPer100Ns; // system + irq + softirq + steal
-        var idle = (Value(4) + Value(5)) * UnixTicksPer100Ns;                     // idle + iowait
+        var idle = (Value(4) + Value(5)) * UnixTicksPer100Ns;                      // idle + iowait
+        // kernel includes idle so that the assessment denominator (kernel + user) equals elapsed CPU time.
+        var system = (Value(3) + Value(6) + Value(7) + (parts.Length > 8 ? Value(8) : 0) + Value(4) + Value(5)) * UnixTicksPer100Ns; // system + irq + softirq + steal + idle + iowait
         return ((ulong)idle, (ulong)system, (ulong)user);
     }
 

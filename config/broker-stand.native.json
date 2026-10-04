@@ -2,32 +2,33 @@
   "schemaVersion": "broker-stand.v1",
   "deploymentMode": "singleHostSequential",
   "cpuMode": "singleCorePinned",
-  "activeBroker": "Mosquitto",
+  "activeBroker": "Aedes",
   "dockerContext": "native-local",
   "controlInterface": "127.0.0.1",
   "networkMode": "host",
   "brokers": [
     {
-      "name": "Mosquitto",
+      "name": "Aedes",
       "loaded": true,
-      "serviceName": "mosquitto",
-      "containerName": "mosquitto",
+      "serviceName": "aedes",
+      "containerName": "aedes",
       "runtime": "native",
       "mqttUri": "mqtt://127.0.0.1:1883",
       "singleHostMqttPort": 1883,
       "distributedMqttPort": 1883,
       "managementUri": null,
-      "executable": "/sbin/mosquitto",
-      "executableSha256": "34cee46d71bd97aca34c75fcb844674ab787434468c06423a3a1f2825a213dea",
+      "executable": "/bin/node",
+      "executableSha256": "0ca513fedb9eade5784c94bed30bc710d116ffd7a5405c54833d4f53e4115de4",
       "args": [
-        "-c",
-        "${MqttBenchmarkRoot}/docker/brokers/mosquitto/mosquitto.local.conf"
+        "${MqttBenchmarkRoot}/docker/brokers/aedes/server.js",
+        "1883"
       ],
       "configFiles": [
-        "${MqttBenchmarkRoot}/docker/brokers/mosquitto/mosquitto.local.conf"
+        "${MqttBenchmarkRoot}/docker/brokers/aedes/server.js"
       ],
+      "logFile": "broker.log",
       "versionArgs": [
-        "-h"
+        "--version"
       ],
       "cpuset": "0",
       "memoryLimit": 4294967296

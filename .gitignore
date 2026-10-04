@@ -25,3 +25,7 @@ Version.cpp
 /config/*.local.json
 /TestResults/
 /run-report-*/
+# Broker dependencies installed by `npm ci` for the native (no-Docker) profile. They are build
+# inputs reproduced from the committed lockfile, not sources: committing them would also break the
+# clean-tree provenance gate that a campaign requires.
+node_modules/

@@ -4,14 +4,28 @@
   "deploymentMode": "singleHostSequential",
   "cpuMode": "singleCorePinned",
   "networkThresholdPercentByBroker": {
-    "Mosquitto": null
+    "Aedes": null
   },
   "cpuThresholdPercent": 100,
-  "brokers": ["Mosquitto"],
+  "brokers": [
+    "Aedes"
+  ],
   "customImageBrokers": [],
-  "messageBytes": [16, 256],
-  "qos": [0, 1, 2],
-  "publishers": [1, 16, 64, 128],
+  "messageBytes": [
+    16,
+    256
+  ],
+  "qos": [
+    0,
+    1,
+    2
+  ],
+  "publishers": [
+    1,
+    16,
+    64,
+    128
+  ],
   "repeats": 3,
   "warmupSeconds": 5,
   "measurementSeconds": 30,

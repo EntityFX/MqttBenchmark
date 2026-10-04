@@ -320,6 +320,136 @@ public class BrokerStandControllerTests : IntegrationTestBase
 
     private static string HashFile(string path) => Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path))).ToLowerInvariant();
 
+    /// <summary>
+    /// Регрессия: <c>Test-NativePortFree</c> трактовал отказ TCP-соединения как исключение, хотя это и
+    /// означает «порт свободен». Нативный стенд без Docker падал на старте с «Connection refused»
+    /// при свободном порте — то есть профиль без Docker был полностью неработоспособен.
+    /// </summary>
+    [TestMethod]
+    public void NativePortProbe_TreatsRefusedConnectionAsAFreePort()
+    {
+        var (port, listener) = FreeLoopbackPort();
+        listener.Stop();
+        try
+        {
+            Assert.AreEqual("True", InvokeStandFunction("Test-NativePortFree", $"mqtt://127.0.0.1:{port}"),
+                "A refused connection means nothing is listening, so the port is free.");
+        }
+        finally { listener.Stop(); }
+    }
+
+    /// <summary>
+    /// Регрессия: занятый порт обязан по-прежнему определяться как занятый (иначе стенд стартует поверх
+    /// чужого брокера и измеряет не тот процесс).
+    /// </summary>
+    [TestMethod]
+    public void NativePortProbe_ReportsAnOccupiedPortAsBusy()
+    {
+        var (port, listener) = FreeLoopbackPort();
+        try
+        {
+            Assert.AreEqual("False", InvokeStandFunction("Test-NativePortFree", $"mqtt://127.0.0.1:{port}"));
+        }
+        finally { listener.Stop(); }
+    }
+
+    /// <summary>
+    /// Регрессия: <c>Resolve-RealPath</c> сравнивал исполняемый файл «как есть». На Linux брокеры живут
+    /// под симлинками (/bin -> /usr/bin), поэтому корректно закреплённый инвентарь отвергался как
+    /// «Running process executable does not match the pinned native identity».
+    /// </summary>
+    [TestMethod]
+    public void RealPath_ResolvesSymlinkedPrefixesSoPinnedAndRunningPathMatch()
+    {
+        if (!OperatingSystem.IsLinux()) return; // /bin -> /usr/bin is a Linux merged-/usr layout.
+        var node = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".mqb-node-probe");
+        File.Copy("/bin/node", node, overwrite: true);
+        try
+        {
+            // Pin via the symlinked prefix, compare against the resolved path: they must agree.
+            var viaSymlink = InvokeStandFunction("Resolve-RealPath", "/bin/node");
+            var direct = InvokeStandFunction("Resolve-RealPath", "/usr/bin/node");
+            StringAssert.Contains(direct, "node");
+            Assert.AreEqual(direct, viaSymlink,
+                "A pinned /bin/node and the kernel-reported /usr/bin/node are the same executable.");
+        }
+        finally { File.Delete(node); }
+    }
+
+    /// <summary>
+    /// Регрессия: <c>Expand-StandToken</c> обязан расширять только токены путей. Аргументы брокера
+    /// смешивают пути с непрозрачными значениями (номер порта «41555»), и GetFullPath превращал порт
+    /// в «&lt;рабочий каталог&gt;/41555», из-за чего брокер не стартовал.
+    /// </summary>
+    [TestMethod]
+    public void TokenExpansion_LeavesOpaqueArgumentsUnchanged()
+    {
+        Assert.AreEqual("41555", InvokeStandFunction("Expand-StandToken", "41555"));
+        Assert.AreEqual("-c", InvokeStandFunction("Expand-StandToken", "-c"));
+        Assert.AreEqual("1883", InvokeStandFunction("Expand-StandToken", "1883"));
+    }
+
+    /// <summary>Регрессия: токен ${MqttBenchmarkRoot} обязан указывать на реальный файл репозитория.</summary>
+    [TestMethod]
+    public void TokenExpansion_ResolvesTheRepositoryRootToARealFile()
+    {
+        var resolved = InvokeStandFunction("Expand-StandToken", "${MqttBenchmarkRoot}/scripts/BrokerStand.ps1");
+        Assert.IsTrue(File.Exists(resolved), "Resolved repository path must exist: " + resolved);
+        StringAssert.Contains(resolved, "BrokerStand.ps1");
+    }
+
+    private static (int port, TcpListener listener) FreeLoopbackPort()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        return (((IPEndPoint)listener.LocalEndpoint).Port, listener);
+    }
+
+    /// <summary>Корень репозитория: каталог, содержащий scripts/BrokerStand.ps1.</summary>
+    private static string RepositoryRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory != null && !File.Exists(Path.Combine(directory.FullName, "scripts", "BrokerStand.ps1")))
+            directory = directory.Parent;
+        Assert.IsNotNull(directory, "Repository root with scripts/BrokerStand.ps1 must be reachable from the test output.");
+        return directory!.FullName;
+    }
+
+    /// <summary>
+    /// Вызывает одну функцию BrokerStand.ps1 в дочернем pwsh и возвращает её вывод. Функции скрипта
+    /// не экспортируются, поэтому тест исполняет определение функции точно так же, как это делает
+    /// контроллер, и печатает единственное значение.
+    /// </summary>
+    private static string InvokeStandFunction(string name, string argument)
+    {
+        var script = Path.Combine(AppContext.BaseDirectory, "BrokerStand.ps1");
+        var definition = System.Text.RegularExpressions.Regex.Match(
+            File.ReadAllText(script), $@"(?s)function {name}\b.*?\n\}}\r?\n").Value;
+        Assert.AreNotEqual("", definition, $"Function {name} must exist in the controller script.");
+        // $PSScriptRoot is automatic only inside a script file; under -Command it is empty. Seed the same
+        // script-scoped repository root the controller itself defines, since the build output copies
+        // BrokerStand.ps1 flat and its parent directory is not a repository root.
+        var repositoryRoot = RepositoryRoot().Replace("'", "''");
+        var escaped = argument.Replace("'", "''");
+        var program = $"$script:RepositoryRoot = '{repositoryRoot}'\n{definition}\nWrite-Output (({name} '{escaped}'))";
+        var info = new ProcessStartInfo(StandShellForTests) { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
+        foreach (var arg in new[] { "-NoProfile", "-Command", program }) info.ArgumentList.Add(arg);
+        using var process = Process.Start(info)!;
+        var output = process.StandardOutput.ReadToEnd();
+        var error = process.StandardError.ReadToEnd();
+        Assert.IsTrue(process.WaitForExit(45000), $"{name} timed out.");
+        Assert.AreEqual(0, process.ExitCode, $"{name} failed: {error}");
+        // A reverted fix escapes as a non-terminating MethodInvocationException: the function still
+        // prints its fallback value and the process still exits 0, so stdout alone cannot detect it.
+        // The controller runs under ErrorActionPreference='Stop', where that same error is fatal.
+        Assert.AreEqual("", error.Trim(), $"{name} must not write an error to stderr.");
+        return output.Trim();
+    }
+
+    /// <summary>Тот же выбор оболочки, что и в StandLifecycle: pwsh, переопределяемый MQB_STAND_SHELL.</summary>
+    private static string StandShellForTests =>
+        Environment.GetEnvironmentVariable("MQB_STAND_SHELL") is { Length: > 0 } shell ? shell : "pwsh";
+
     private sealed class StandFixture : IDisposable
     {
         public const string ImageId = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";

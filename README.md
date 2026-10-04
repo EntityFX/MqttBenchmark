@@ -5,6 +5,28 @@ identified exact-size payloads, immutable retry/resume, protocol preflight and
 `broker-observations.v3.json` for MqttY calibration. Start with
 `config/benchmark-campaign.v3.json` and `config/broker-stand.v1.json`.
 
+## Running locally without Docker
+
+Brokers do not have to run in containers. A stand entry with `"runtime": "native"` starts the
+broker as an ordinary local process, and the same commands work on Linux and Windows. The
+supported local profile needs only the .NET 6 runtime, PowerShell 7 (`pwsh`), and a local
+broker executable — for example Aedes, which runs on Node.js straight from the committed
+lockfile:
+
+```bash
+npm ci --prefix docker/brokers/aedes
+pwsh scripts/PinNativeExecutable.ps1 -StandPath config/broker-stand.native.json -Executable "$(command -v node)"
+
+dotnet run --project src/EntityFX.MqttBenchmark.Cli -- preflight \
+  --config config/benchmark-campaign.native.json \
+  --stand  config/broker-stand.native.json \
+  --output results/preflight-local \
+  --benchmark-repo .
+```
+
+Set `MQB_STAND_SHELL` if `pwsh` is not on `PATH`. Full instructions, including the portable
+`${MqttBenchmarkRoot}` path token, are in [DEPLOYMENT.md](DEPLOYMENT.md).
+
 ## Legacy schema v2
 
 The reproducible calibration pipeline is driven by

@@ -13,6 +13,11 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+# Repository root that backs the ${MqttBenchmarkRoot} token. Held in a script-scoped variable rather
+# than read from $PSScriptRoot at each use, so the token resolves identically when the controller runs
+# as a script file and when a single function is extracted and exercised in isolation.
+$script:RepositoryRoot = Split-Path -Parent $PSScriptRoot
+
 function Write-JsonFile($Value, [string]$Path) {
     ConvertTo-Json -InputObject $Value -Depth 30 | Set-Content -LiteralPath $Path -Encoding utf8NoBOM
 }
@@ -52,10 +57,11 @@ function Test-Inventory($Inventory) {
         if ($runtime -eq 'native') {
             # Native brokers run a local executable: the container "custom image" build concept does
             # not apply (no image is built or pulled), so Aedes/ActiveMQ are legal here too.
-            if (-not $broker.Contains('executable') -or [string]::IsNullOrWhiteSpace([string]$broker.executable) -or -not [IO.Path]::IsPathRooted([string]$broker.executable)) { throw "Broker '$name' requires an absolute native executable path." }
+            if (-not $broker.Contains('executable') -or [string]::IsNullOrWhiteSpace([string]$broker.executable) -or
+                -not [IO.Path]::IsPathRooted((Resolve-StandPath ([string]$broker.executable)))) { throw "Broker '$name' requires an absolute native executable path." }
             $sha = if ($broker.Contains('executableSha256')) { [string]$broker.executableSha256 } else { '' }
             if ($sha -cnotmatch '^[0-9a-f]{64}$' -or $sha -cmatch '^(.)\1{63}$') { throw "Broker '$name' requires a pinned executableSha256 (run scripts/PinNativeExecutable.ps1)." }
-            foreach ($file in @($broker.configFiles)) { if ([string]::IsNullOrWhiteSpace([string]$file) -or -not [IO.Path]::IsPathRooted([string]$file)) { throw "Broker '$name' native configFiles must be absolute paths." } }
+            foreach ($file in @($broker.configFiles)) { if ([string]::IsNullOrWhiteSpace([string]$file) -or -not [IO.Path]::IsPathRooted((Resolve-StandPath ([string]$file)))) { throw "Broker '$name' native configFiles must be absolute paths." } }
             if ($broker.Contains('args') -and $broker.args -and $broker.args -is [string]) { throw "Broker '$name' native args must be an array of strings." }
         } else {
             [void](Required $broker 'image')
@@ -84,6 +90,39 @@ function Test-Inventory($Inventory) {
     if ($Inventory.Contains('campaign') -and $Inventory.campaign -and ($Inventory.campaign.deploymentMode -ne $Inventory.deploymentMode -or $Inventory.campaign.cpuMode -ne $Inventory.cpuMode)) { throw 'Campaign deployment and CPU modes must match the broker stand.' }
 }
 
+# Absolute path, with two conveniences for portable, Docker-free inventories:
+#   ${MqttBenchmarkRoot}  -> the repository root (the parent of scripts/), and
+#   ~/...                 -> the invoking user's home directory.
+# Everything else must stay absolute, so an inventory remains unambiguous on any host.
+function Resolve-StandPath([string]$Path) {
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $Path }
+    # Only expand when the token really prefixes the value. A bare "41555" or "mosquitto -c" style
+    # argument must pass through untouched: expanding blindly turned a plain port into a path.
+    if ($Path.StartsWith('${MqttBenchmarkRoot}/', [StringComparison]::Ordinal) -or
+        $Path.StartsWith('${MqttBenchmarkRoot}\', [StringComparison]::Ordinal)) {
+        $Path = Join-Path $script:RepositoryRoot $Path.Substring('${MqttBenchmarkRoot}'.Length).TrimStart('/', '\')
+    }
+    elseif ($Path -eq '~' -or $Path.StartsWith('~/', [StringComparison]::Ordinal) -or $Path.StartsWith('~\', [StringComparison]::Ordinal)) {
+        $Path = Join-Path $HOME $Path.Substring(1).TrimStart('/', '\')
+    }
+    return [IO.Path]::GetFullPath($Path)
+}
+
+# Token expansion only, with no GetFullPath. Broker arguments mix paths with opaque values (a port
+# number, a QoS level, a broker flag), and GetFullPath would silently resolve a bare relative value
+# against the controller's working directory - turning "41555" into "<cwd>/41555".
+function Expand-StandToken([string]$Value) {
+    if ([string]::IsNullOrWhiteSpace($Value)) { return $Value }
+    if ($Value.StartsWith('${MqttBenchmarkRoot}/', [StringComparison]::Ordinal) -or
+        $Value.StartsWith('${MqttBenchmarkRoot}\', [StringComparison]::Ordinal)) {
+        return [IO.Path]::GetFullPath((Join-Path $script:RepositoryRoot $Value.Substring('${MqttBenchmarkRoot}'.Length).TrimStart('/', '\')))
+    }
+    if ($Value -eq '~' -or $Value.StartsWith('~/', [StringComparison]::Ordinal) -or $Value.StartsWith('~\', [StringComparison]::Ordinal)) {
+        return [IO.Path]::GetFullPath((Join-Path $HOME $Value.Substring(1).TrimStart('/', '\')))
+    }
+    return $Value
+}
+
 function Invoke-Docker([string[]]$Arguments, [scriptblock]$OnLine = $null) {
     $result = & $DockerExecutable @Arguments 2>&1 | ForEach-Object {
         if ($OnLine) { & $OnLine ([string]$_) } else { $_ }
@@ -101,6 +140,27 @@ function Get-BrokersRoot {
 }
 
 function Get-Hash([string]$Path) { return (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToLowerInvariant() }
+
+# Canonical path with every symlink resolved. Linux keeps brokers under symlinked prefixes
+# (/bin -> /usr/bin, /lib -> /usr/lib), so a pinned inventory path and the kernel-reported process
+# path are the same file spelled differently; comparing them raw rejected a correctly pinned broker.
+# A relative link target is resolved against the link's own directory, not the current directory.
+function Resolve-RealPath([string]$Path) {
+    $full = [IO.Path]::GetFullPath($Path)
+    $root = [IO.Path]::GetPathRoot($full)
+    $current = $root
+    foreach ($part in $full.Substring($root.Length).Split([char]"/", [StringSplitOptions]::RemoveEmptyEntries)) {
+        $next = [IO.Path]::Combine($current, $part)
+        $item = Get-Item -LiteralPath $next -Force -ErrorAction SilentlyContinue
+        if ($item -and $item.LinkTarget) {
+            $target = [string]$item.LinkTarget
+            if (-not [IO.Path]::IsPathRooted($target)) { $target = [IO.Path]::Combine($current, $target) }
+            $next = [IO.Path]::GetFullPath($target)
+        }
+        $current = $next
+    }
+    return $current
+}
 
 function Get-BuildInputs($Broker) {
     $paths = @('compose.yml', '.dockerignore')
@@ -305,7 +365,17 @@ function Get-BrokerRuntime($Broker) { if ($Broker.Contains('runtime') -and $Brok
 function Test-NativePortFree([string]$MqttUri) {
     $uri = [Uri]$MqttUri
     $client = [Net.Sockets.TcpClient]::new()
-    try { if ($client.ConnectAsync($uri.Host, $uri.Port).Wait(1000)) { return $false } } finally { $client.Dispose() }
+    try {
+        # A refused/timed-out connect means nothing is listening, i.e. the port IS free. TcpClient
+        # surfaces that as a SocketException wrapped in an AggregateException by Task.Wait, so the
+        # failure must be caught here; letting it escape aborted every native start with
+        # "Connection refused" even though the port was available.
+        try {
+            if ($client.ConnectAsync($uri.Host, $uri.Port).Wait(1000)) { return $false }
+        } catch {
+            return $true
+        }
+    } finally { $client.Dispose() }
     return $true
 }
 
@@ -353,7 +423,7 @@ function Get-NativeRun($Broker) {
     if (-not $process) { throw "Native broker process $($run.unitId) is not running." }
     $actualPath = $null
     try { $actualPath = $process.Path } catch { $null }
-    if ($actualPath -and ([IO.Path]::GetFullPath($actualPath) -ine [IO.Path]::GetFullPath([string]$Broker.executable))) {
+    if ($actualPath -and (Resolve-RealPath $actualPath) -ine (Resolve-RealPath ([string]$Broker.executable))) {
         throw 'Running process executable does not match the pinned native identity.'
     }
     foreach ($config in @($run.effectiveConfigs)) {
@@ -363,16 +433,19 @@ function Get-NativeRun($Broker) {
 }
 
 function Start-NativeBroker($Broker) {
-    $executable = [IO.Path]::GetFullPath([string]$Broker.executable)
+    $executable = Resolve-StandPath ([string]$Broker.executable)
     if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) { throw "Native executable not found: $executable" }
     $actualSha = Get-Hash $executable
     if ($actualSha -ne ([string]$Broker.executableSha256).ToLowerInvariant()) { throw 'Native executable hash does not match the pinned identity.' }
     if (-not (Test-NativePortFree $Broker.mqttUri)) { throw "MQTT endpoint $($Broker.mqttUri) is already in use; stop the other broker first." }
     $configs = @()
     foreach ($file in @($Broker.configFiles)) {
-        if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "Native config file not found: $file" }
-        $configs += [ordered]@{ path = [IO.Path]::GetFullPath([string]$file); sha256 = Get-Hash ([string]$file) }
+        $resolved = Resolve-StandPath ([string]$file)
+        if (-not (Test-Path -LiteralPath $resolved -PathType Leaf)) { throw "Native config file not found: $resolved" }
+        $configs += [ordered]@{ path = $resolved; sha256 = Get-Hash $resolved }
     }
+    # Every argument may carry a portable path token; expand tokens only, so opaque values survive.
+    $resolvedArgs = @($Broker.args | ForEach-Object { Expand-StandToken ([string]$_) })
     $logsDirectory = Join-Path $OutputDirectory 'logs'
     New-Item -ItemType Directory -Force -Path $logsDirectory | Out-Null
     $stdoutLog = Join-Path $logsDirectory 'broker.stdout.log'
@@ -384,21 +457,36 @@ function Start-NativeBroker($Broker) {
     # until the broker exits. Start-Process -Redirect* leaves the same internal pipe in the child,
     # so the launch goes through the system shell with file redirection (empirically verified: the
     # parent's output capture returns immediately and the broker survives the controller exit).
-    $argumentLine = @($Broker.args | ForEach-Object { '"' + ([string]$_ -replace '"', '\"') + '"' }) -join ' '
+    $argumentLine = @($resolvedArgs | ForEach-Object { '"' + ([string]$_ -replace '"', '\"') + '"' }) -join ' '
     $workingDirectory = if ($Broker.Contains('workingDirectory') -and $Broker.workingDirectory) { [IO.Path]::GetFullPath([string]$Broker.workingDirectory) } else { $logsDirectory }
     $quotedWorking = '"' + ($workingDirectory -replace '"', '\"') + '"'
+    # The launch is written to a script file and executed, instead of being passed inline via
+    # Start-Process -ArgumentList: PowerShell joins -ArgumentList elements with plain spaces and does
+    # NOT quote them, so an inline `sh -c "<command with spaces>"` was truncated to its first word and the
+    # broker never started (the launcher exited immediately and no MQTT port appeared). A script file has
+    # exactly one argument, which both the POSIX shell and cmd.exe receive verbatim.
+    $launcherPath = Join-Path $logsDirectory 'launch-broker.sh'
     if ($env:OS -eq 'Windows_NT') {
-        $commandLine = 'cd /d {0} && start /b "" "{1}" {2} > "{3}" 2> "{4}"' -f $quotedWorking, $executable, $argumentLine, $stdoutLog, $stderrLog
-        $launcher = 'cmd'
+        [IO.File]::WriteAllText((Join-Path $logsDirectory 'launch-broker.cmd'),
+            "@echo off`r`ncd /d $quotedWorking`r`nstart /b `"`" `"$executable`" $argumentLine > `"$stdoutLog`" 2> `"$stderrLog`"`r`n",
+            [Text.UTF8Encoding]::new($false))
+        $launcherFile = Join-Path $logsDirectory 'launch-broker.cmd'
     } else {
-        $commandLine = 'cd {0} && nohup "{1}" {2} > "{3}" 2> "{4}" < /dev/null &' -f $quotedWorking, $executable, $argumentLine, $stdoutLog, $stderrLog
-        $launcher = 'sh'
+        [IO.File]::WriteAllText($launcherPath,
+            "#!/bin/sh`ncd $quotedWorking || exit 1`nnohup `"$executable`" $argumentLine > `"$stdoutLog`" 2> `"$stderrLog`" < /dev/null &`n",
+            [Text.UTF8Encoding]::new($false))
+        $launcherFile = $launcherPath
     }
     try {
-        # Start-Process (not a direct native call): empirically a Start-Process-launched shell returns
-        # to the controller immediately after the broker detaches, while a direct `& cmd` invocation
-        # keeps the controller's output pipe open until the broker exits (parent capture would block).
-        $null = Start-Process -FilePath $launcher -ArgumentList @('/c', $commandLine) -PassThru
+        # The launcher shell exits as soon as the broker is detached. ProcessStartInfo.ArgumentList
+        # quotes each element correctly (unlike Start-Process -ArgumentList), so a working directory
+        # or executable path containing spaces survives intact.
+        $launcher = [Diagnostics.ProcessStartInfo]::new()
+        $launcher.FileName = if ($env:OS -eq 'Windows_NT') { Join-Path $env:SystemRoot 'System32\cmd.exe' } else { 'sh' }
+        $launcher.UseShellExecute = $false
+        $launcher.ArgumentList.Add($launcherFile)
+        $process = [Diagnostics.Process]::Start($launcher)
+        if ($process) { $process.WaitForExit(30000) | Out-Null; $process.Dispose() }
     } catch { throw "Native broker process failed to start: $($_.Exception.Message)" }
     # Readiness + identity: the broker must own its MQTT port (the port was verified free above, so
     # the first listener is ours). The port also uniquely identifies the broker pid across the
