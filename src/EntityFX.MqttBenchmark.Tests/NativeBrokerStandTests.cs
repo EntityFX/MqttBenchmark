@@ -180,6 +180,60 @@ public class NativeBrokerStandTests : IntegrationTestBase
     }
 
     [TestMethod]
+    public async Task NativeExternalStand_CapturesWithoutStartingOrStoppingTheOperatorProcess()
+    {
+        var spec = RequireNativeBrokerSpec();
+        using var fixture = BuildNativeStand(spec, ReserveFreeLoopbackPort());
+        var json = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(fixture.InventoryPath))!;
+        json["cpuMode"] = "hostAllCores";
+        json["brokers"]![0]!["cpuset"] = "";
+        json["brokers"]![0]!["lifecycle"] = "external";
+        File.WriteAllText(fixture.InventoryPath, json.ToJsonString());
+        var info = new System.Diagnostics.ProcessStartInfo(spec.Executable) { UseShellExecute = false };
+        foreach (var argument in json["brokers"]![0]!["args"]!.AsArray()) info.ArgumentList.Add(argument!.GetValue<string>());
+        using var process = System.Diagnostics.Process.Start(info)!;
+        try
+        {
+            await using (var session = await StandSession.StartAsync(Path.Combine(RepoRoot(), "scripts", "BrokerStand.ps1"),
+                fixture.InventoryPath, new CampaignDefinition { CpuMode = "hostAllCores" }, spec.Name, fixture.Output))
+            {
+                var provenance = JsonDocument.Parse(File.ReadAllText(Path.Combine(fixture.Output, "run-provenance.json")));
+                Assert.AreEqual(process.Id.ToString(), provenance.RootElement.GetProperty("unitId").GetString());
+                Assert.IsTrue(provenance.RootElement.GetProperty("externallyManaged").GetBoolean());
+                Assert.AreEqual(2, (await session.CaptureAsync(2)).SampleCount);
+            }
+            Assert.IsFalse(process.HasExited, "Disposing an external stand must leave the operator's broker running.");
+        }
+        finally
+        {
+            if (!process.HasExited) { process.Kill(true); process.WaitForExit(); }
+        }
+    }
+
+    [TestMethod]
+    public async Task NativeStand_RejectsLocalOccupiedPortEvenWithAnAdvertisedForwardingAddress()
+    {
+        var spec = RequireNativeBrokerSpec();
+        var port = ReserveFreeLoopbackPort();
+        using var fixture = BuildNativeStand(spec, port);
+        var json = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(fixture.InventoryPath))!;
+        json["cpuMode"] = "hostAllCores";
+        json["brokers"]![0]!["cpuset"] = "";
+        json["brokers"]![0]!["mqttUri"] = $"mqtt://192.0.2.123:{port}";
+        File.WriteAllText(fixture.InventoryPath, json.ToJsonString());
+        var occupied = new TcpListener(IPAddress.Loopback, port);
+        occupied.Start();
+        try
+        {
+            var error = await Assert.ThrowsExceptionAsync<InvalidOperationException>(() => StandSession.StartAsync(
+                Path.Combine(RepoRoot(), "scripts", "BrokerStand.ps1"), fixture.InventoryPath,
+                new CampaignDefinition { CpuMode = "hostAllCores" }, spec.Name, fixture.Output));
+            StringAssert.Contains(error.Message, "already in use");
+        }
+        finally { occupied.Stop(); }
+    }
+
+    [TestMethod]
     public async Task NativeStand_RejectsExecutableHashMismatch()
     {
         var spec = RequireNativeBrokerSpec();

@@ -1,0 +1,10 @@
+{
+  "brokers": [{
+    "name": "Mosquitto",
+    "mqttUri": "mqtt://127.0.0.1:1883",
+    "executable": "C:/Program Files/mosquitto/mosquitto.exe",
+    "args": ["-c", "${MqttBenchmarkRoot}/docker/brokers/mosquitto/mosquitto.local.conf"],
+    "configFiles": ["${MqttBenchmarkRoot}/docker/brokers/mosquitto/mosquitto.local.conf"],
+    "versionArgs": ["-h"]
+  }]
+}

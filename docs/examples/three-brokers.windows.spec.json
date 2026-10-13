@@ -1,0 +1,57 @@
+{
+  "brokers": [
+    {
+      "name": "Aedes",
+      "mqttUri": "mqtt://127.0.0.1:1883",
+      "executable": "C:/Program Files/nodejs/node.exe",
+      "args": [
+        "${MqttBenchmarkRoot}/docker/brokers/aedes/server.js",
+        "1883"
+      ],
+      "configFiles": [
+        "${MqttBenchmarkRoot}/docker/brokers/aedes/server.js",
+        "${MqttBenchmarkRoot}/docker/brokers/aedes/package-lock.json"
+      ],
+      "versionArgs": [
+        "--version"
+      ],
+      "brokerVersion": "1.1.2"
+    },
+    {
+      "name": "Mosquitto",
+      "mqttUri": "mqtt://127.0.0.1:2883",
+      "executable": "C:/Program Files/mosquitto/mosquitto.exe",
+      "args": [
+        "-c",
+        "${MqttBenchmarkRoot}/config/mosquitto.local.conf"
+      ],
+      "configFiles": [
+        "${MqttBenchmarkRoot}/config/mosquitto.local.conf"
+      ],
+      "versionArgs": [
+        "-h"
+      ],
+      "brokerVersion": "2.0.15"
+    },
+    {
+      "name": "ActiveMQ",
+      "mqttUri": "mqtt://127.0.0.1:3883",
+      "executable": "C:/Program Files/Java/jdk-17/bin/java.exe",
+      "launcherExecutable": "C:/work/brokers/apache-activemq-6.3.2/bin/activemq.bat",
+      "args": [
+        "start"
+      ],
+      "workingDirectory": "C:/work/brokers/apache-activemq-6.3.2",
+      "configFiles": [
+        "C:/work/brokers/apache-activemq-6.3.2/conf/activemq.xml"
+      ],
+      "versionArgs": [
+        "-version"
+      ],
+      "brokerVersion": "6.3.2",
+      "environment": {
+        "JAVA_HOME": "C:/Program Files/Java/jdk-17"
+      }
+    }
+  ]
+}

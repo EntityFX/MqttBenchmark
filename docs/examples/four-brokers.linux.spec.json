@@ -1,0 +1,74 @@
+{
+  "brokers": [
+    {
+      "name": "Aedes",
+      "mqttUri": "mqtt://127.0.0.1:1883",
+      "executable": "/usr/bin/node",
+      "args": [
+        "${MqttBenchmarkRoot}/docker/brokers/aedes/server.js",
+        "1883"
+      ],
+      "configFiles": [
+        "${MqttBenchmarkRoot}/docker/brokers/aedes/server.js",
+        "${MqttBenchmarkRoot}/docker/brokers/aedes/package-lock.json"
+      ],
+      "versionArgs": [
+        "--version"
+      ],
+      "brokerVersion": "1.1.2"
+    },
+    {
+      "name": "Mosquitto",
+      "mqttUri": "mqtt://127.0.0.1:2883",
+      "executable": "/usr/sbin/mosquitto",
+      "args": [
+        "-c",
+        "${MqttBenchmarkRoot}/config/mosquitto.local.conf"
+      ],
+      "configFiles": [
+        "${MqttBenchmarkRoot}/config/mosquitto.local.conf"
+      ],
+      "versionArgs": [
+        "-h"
+      ],
+      "brokerVersion": "2.0.15"
+    },
+    {
+      "name": "ActiveMQ",
+      "mqttUri": "mqtt://127.0.0.1:3883",
+      "executable": "/usr/bin/java",
+      "launcherExecutable": "/home/researcher/opt/mqtty-brokers/apache-activemq-6.3.2/bin/activemq",
+      "args": [
+        "console"
+      ],
+      "workingDirectory": "/home/researcher/opt/mqtty-brokers/apache-activemq-6.3.2",
+      "configFiles": [
+        "/home/researcher/opt/mqtty-brokers/apache-activemq-6.3.2/conf/activemq.xml"
+      ],
+      "versionArgs": [
+        "-version"
+      ],
+      "brokerVersion": "6.3.2"
+    },
+    {
+      "name": "EMQX",
+      "mqttUri": "mqtt://127.0.0.1:4883",
+      "executable": "/home/researcher/opt/mqtty-brokers/emqx/erts-16.3/bin/beam.smp",
+      "launcherExecutable": "/home/researcher/opt/mqtty-brokers/emqx/bin/emqx",
+      "args": [
+        "foreground"
+      ],
+      "workingDirectory": "/home/researcher/opt/mqtty-brokers/emqx",
+      "configFiles": [
+        "/home/researcher/opt/mqtty-brokers/emqx/etc/emqx.conf",
+        "/home/researcher/opt/mqtty-brokers/emqx/etc/base.hocon",
+        "/home/researcher/opt/mqtty-brokers/emqx/etc/vm.args"
+      ],
+      "startTimeoutSeconds": 60,
+      "brokerVersion": "6.3.0",
+      "environment": {
+        "DEBUG": "0"
+      }
+    }
+  ]
+}

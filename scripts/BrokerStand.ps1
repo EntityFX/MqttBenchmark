@@ -7,7 +7,8 @@ param(
     [ValidateRange(1, 300)][int]$HealthTimeoutSeconds = 60,
     [ValidateRange(1, 60000)][int]$ClockAlignmentBoundMs = 3000,
     [string]$DockerExecutable = 'docker',
-    [string]$TrustedBuildProvenanceDirectory
+    [string]$TrustedBuildProvenanceDirectory,
+    [switch]$NativeWorker
 )
 
 Set-StrictMode -Version Latest
@@ -16,7 +17,18 @@ $ErrorActionPreference = 'Stop'
 # Repository root that backs the ${MqttBenchmarkRoot} token. Held in a script-scoped variable rather
 # than read from $PSScriptRoot at each use, so the token resolves identically when the controller runs
 # as a script file and when a single function is extracted and exercised in isolation.
-$script:RepositoryRoot = Split-Path -Parent $PSScriptRoot
+$script:RepositoryRoot = if ($env:MQB_NATIVE_REPOSITORY_ROOT) { $env:MQB_NATIVE_REPOSITORY_ROOT } else { Split-Path -Parent $PSScriptRoot }
+
+# SSH workers stream these frames while capture is still running. In particular, the controller
+# must persist the first sample and readiness marker before StandSession dispatches any workload.
+function Publish-NativeArtifact([string]$Path, [string]$AppendLine, [switch]$Append) {
+    if (-not $NativeWorker) { return }
+    $relative = [IO.Path]::GetRelativePath($OutputDirectory, $Path).Replace('\', '/')
+    $bytes = if ($Append) { [Text.Encoding]::UTF8.GetBytes($AppendLine + [Environment]::NewLine) } else { [IO.File]::ReadAllBytes($Path) }
+    $frame = @{ path = $relative; append = [bool]$Append; bytes = [Convert]::ToBase64String($bytes) }
+    [Console]::Out.WriteLine('__MQB_ARTIFACT__' + (ConvertTo-Json $frame -Compress))
+    [Console]::Out.Flush()
+}
 
 function Write-JsonFile($Value, [string]$Path) {
     ConvertTo-Json -InputObject $Value -Depth 30 | Set-Content -LiteralPath $Path -Encoding utf8NoBOM
@@ -29,6 +41,14 @@ function Required($Object, [string]$Name) {
 
 function Is-Custom($Broker) { return $Broker.name -in @('Aedes', 'ActiveMQ') }
 function Is-Digest([string]$Value) { return $Value -cmatch '^sha256:[0-9a-f]{64}$' -and $Value -cnotmatch '^sha256:(.)\1{63}$' }
+
+function Test-NativeAbsolutePath([string]$Value, [bool]$Selected) {
+    if ([string]::IsNullOrWhiteSpace($Value)) { return $false }
+    $expanded = Expand-StandToken $Value
+    if ($Selected) { return [IO.Path]::IsPathRooted($expanded) }
+    # Other brokers can belong to a different OS. Only their worker resolves their paths.
+    return $expanded.StartsWith('/') -or $expanded -match '^[a-zA-Z]:[\\/]'
+}
 
 function Test-Inventory($Inventory) {
     if ((Required $Inventory 'schemaVersion') -ne 'broker-stand.v1') { throw 'Unsupported broker stand schema version.' }
@@ -55,13 +75,14 @@ function Test-Inventory($Inventory) {
         $runtime = if ($broker.Contains('runtime') -and $broker.runtime) { [string]$broker.runtime } else { 'container' }
         if ($runtime -notin @('container', 'native')) { throw "Unsupported broker runtime '$runtime' for broker '$name'." }
         if ($runtime -eq 'native') {
+            if ($broker.Contains('lifecycle') -and $broker.lifecycle -notin @('managed', 'external')) { throw 'Native lifecycle must be managed or external.' }
             # Native brokers run a local executable: the container "custom image" build concept does
             # not apply (no image is built or pulled), so Aedes/ActiveMQ are legal here too.
             if (-not $broker.Contains('executable') -or [string]::IsNullOrWhiteSpace([string]$broker.executable) -or
-                -not [IO.Path]::IsPathRooted((Resolve-StandPath ([string]$broker.executable)))) { throw "Broker '$name' requires an absolute native executable path." }
+                -not (Test-NativeAbsolutePath ([string]$broker.executable) ($name -eq $Inventory.activeBroker))) { throw "Broker '$name' requires an absolute native executable path." }
             $sha = if ($broker.Contains('executableSha256')) { [string]$broker.executableSha256 } else { '' }
             if ($sha -cnotmatch '^[0-9a-f]{64}$' -or $sha -cmatch '^(.)\1{63}$') { throw "Broker '$name' requires a pinned executableSha256 (run scripts/PinNativeExecutable.ps1)." }
-            foreach ($file in @($broker.configFiles)) { if ([string]::IsNullOrWhiteSpace([string]$file) -or -not [IO.Path]::IsPathRooted((Resolve-StandPath ([string]$file)))) { throw "Broker '$name' native configFiles must be absolute paths." } }
+            foreach ($file in @($broker.configFiles)) { if (-not (Test-NativeAbsolutePath ([string]$file) ($name -eq $Inventory.activeBroker))) { throw "Broker '$name' native configFiles must be absolute paths." } }
             if ($broker.Contains('args') -and $broker.args -and $broker.args -is [string]) { throw "Broker '$name' native args must be an array of strings." }
         } else {
             [void](Required $broker 'image')
@@ -70,10 +91,12 @@ function Test-Inventory($Inventory) {
             }
             elseif (-not (Is-Digest ([string]$broker.digest)) -or $broker.digestProvenance.status -ne 'verified') { throw "Broker '$name' requires a verified immutable registry digest." }
         }
-        if ($Inventory.cpuMode -eq 'singleCorePinned' -and [string]$broker.cpuset -notmatch '^\d+$') { throw "Broker '$name' must pin exactly one CPU." }
+        if ($Inventory.cpuMode -eq 'singleCorePinned' -and ([string]$broker.cpuset -notmatch '^\d+$' -or [int]$broker.cpuset -gt 63)) { throw "Broker '$name' must pin exactly one CPU in the supported affinity mask (0..63)." }
         if ($Inventory.cpuMode -eq 'hostAllCores' -and -not [string]::IsNullOrWhiteSpace([string]$broker.cpuset)) { throw 'hostAllCores must not define cpuset.' }
         if ([long](Required $broker 'memoryLimit') -ne 4294967296) { throw 'The baseline memory limit is 4294967296 bytes.' }
-        if ([int](Required $broker 'distributedMqttPort') -ne 1883) { throw 'Distributed brokers must use MQTT port 1883.' }
+        $distributedPort = [int](Required $broker 'distributedMqttPort')
+        if ($runtime -eq 'container' -and $distributedPort -ne 1883) { throw 'Distributed containers must use MQTT port 1883.' }
+        if ($runtime -eq 'native' -and ($distributedPort -lt 1 -or $distributedPort -gt 65535)) { throw 'Invalid distributed native MQTT port.' }
         if (@($Inventory.brokers).Count -gt 1) {
             $singlePorts = @{ Aedes = 1883; Mosquitto = 2883; ActiveMQ = 3883; EMQX = 4883 }
             if ([int](Required $broker 'singleHostMqttPort') -ne $singlePorts[$name]) { throw 'Invalid single-host MQTT port.' }
@@ -133,7 +156,7 @@ function Invoke-Docker([string[]]$Arguments, [scriptblock]$OnLine = $null) {
 }
 
 function Get-BrokersRoot {
-    foreach ($candidate in @((Join-Path $PSScriptRoot 'docker/brokers'), (Join-Path $PSScriptRoot '../docker/brokers'))) {
+    foreach ($candidate in @((Join-Path $script:RepositoryRoot 'docker/brokers'), (Join-Path $PSScriptRoot 'docker/brokers'), (Join-Path $PSScriptRoot '../docker/brokers'))) {
         if (Test-Path (Join-Path $candidate 'compose.yml')) { return [IO.Path]::GetFullPath($candidate) }
     }
     throw 'Broker compose file was not found.'
@@ -153,9 +176,11 @@ function Resolve-RealPath([string]$Path) {
         $next = [IO.Path]::Combine($current, $part)
         $item = Get-Item -LiteralPath $next -Force -ErrorAction SilentlyContinue
         if ($item -and $item.LinkTarget) {
-            $target = [string]$item.LinkTarget
-            if (-not [IO.Path]::IsPathRooted($target)) { $target = [IO.Path]::Combine($current, $target) }
-            $next = [IO.Path]::GetFullPath($target)
+            # Follow the entire chain (e.g. /usr/bin/java -> /etc/alternatives/java -> JDK),
+            # not just its first hop, before comparing it with the kernel's executable path.
+            $target = $item.ResolveLinkTarget($true)
+            if (-not $target) { throw "Unable to resolve native executable link: $next" }
+            $next = [IO.Path]::GetFullPath($target.FullName)
         }
         $current = $next
     }
@@ -364,19 +389,15 @@ function Get-BrokerRuntime($Broker) { if ($Broker.Contains('runtime') -and $Brok
 
 function Test-NativePortFree([string]$MqttUri) {
     $uri = [Uri]$MqttUri
-    $client = [Net.Sockets.TcpClient]::new()
+    # Check the broker host, not the advertised endpoint. A Windows portproxy can
+    # accept connections even while its WSL backend is stopped.
+    $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Any, $uri.Port)
     try {
-        # A refused/timed-out connect means nothing is listening, i.e. the port IS free. TcpClient
-        # surfaces that as a SocketException wrapped in an AggregateException by Task.Wait, so the
-        # failure must be caught here; letting it escape aborted every native start with
-        # "Connection refused" even though the port was available.
-        try {
-            if ($client.ConnectAsync($uri.Host, $uri.Port).Wait(1000)) { return $false }
-        } catch {
-            return $true
-        }
-    } finally { $client.Dispose() }
-    return $true
+        $listener.Server.ExclusiveAddressUse = $true
+        $listener.Start()
+        return $true
+    } catch [Net.Sockets.SocketException] { return $false }
+    finally { $listener.Stop() }
 }
 
 # Resolves the pid of the process listening on the given port (cross-platform).
@@ -414,21 +435,51 @@ function Get-NativeListenerPid([int]$Port) {
     return $null
 }
 
-function Get-NativeRun($Broker) {
+function Get-NativeProcessIdentity($Process) {
+    if ($IsWindows) { return [string]$Process.StartTime.ToUniversalTime().Ticks }
+    # /proc starttime is stable across reads; .NET StartTime on Linux derives realtime from
+    # the boot clock and can differ slightly between controller invocations.
+    $stat = [IO.File]::ReadAllText("/proc/$($Process.Id)/stat")
+    return [string]($stat.Substring($stat.LastIndexOf(')') + 2).Split(' ', [StringSplitOptions]::RemoveEmptyEntries)[19])
+}
+
+function Stop-NativeWindowsLauncher($LauncherId, [string]$Identity) {
+    if (-not $LauncherId) { return }
+    $launcherProcess = Get-Process -Id ([int]$LauncherId) -ErrorAction SilentlyContinue
+    if (-not $launcherProcess) { return }
+    if ((Get-NativeProcessIdentity $launcherProcess) -ne $Identity -or
+        (Resolve-RealPath $launcherProcess.Path) -ine (Resolve-RealPath (Join-Path $env:SystemRoot 'System32/cmd.exe'))) {
+        throw 'Native launcher PID no longer belongs to this attempt.'
+    }
+    if (-not $launcherProcess.WaitForExit(5000)) {
+        $launcherProcess.Kill($true)
+        if (-not $launcherProcess.WaitForExit(5000)) { throw 'Native launcher did not stop.' }
+    }
+    $launcherProcess.Dispose()
+}
+
+function Get-NativeRun($Broker, [switch]$SkipConfigValidation, [switch]$AllowStopped) {
     $path = Join-Path $OutputDirectory 'run-provenance.json'
     if (-not (Test-Path -LiteralPath $path)) { throw 'No native start provenance exists; run start first.' }
     $run = Get-Content -Raw -LiteralPath $path | ConvertFrom-Json -AsHashtable
     if ($run.broker -ne $Broker.name -or $run.context -ne $context) { throw 'Native run provenance does not match the selected broker/context.' }
     $process = Get-Process -Id ([int]$run.unitId) -ErrorAction SilentlyContinue
-    if (-not $process) { throw "Native broker process $($run.unitId) is not running." }
+    if (-not $process) {
+        if ($AllowStopped) { return $run }
+        throw "Native broker process $($run.unitId) is not running."
+    }
     $actualPath = $null
     try { $actualPath = $process.Path } catch { $null }
-    if ($actualPath -and (Resolve-RealPath $actualPath) -ine (Resolve-RealPath ([string]$Broker.executable))) {
+    if (-not $actualPath -or (Resolve-RealPath $actualPath) -ine (Resolve-RealPath (Resolve-StandPath ([string]$Broker.executable))) -or
+        (Get-Hash $actualPath) -ne $Broker.executableSha256) {
         throw 'Running process executable does not match the pinned native identity.'
     }
-    foreach ($config in @($run.effectiveConfigs)) {
-        if (-not (Test-Path -LiteralPath $config.path) -or (Get-Hash $config.path) -ne $config.sha256) { throw "Native configuration changed after start: $($config.path)" }
+    if ($run.Contains('processStartIdentity') -and (Get-NativeProcessIdentity $process) -ne $run.processStartIdentity) {
+        throw 'Native broker PID was reused by a different process instance.'
     }
+    if (-not $SkipConfigValidation) { foreach ($config in @($run.effectiveConfigs)) {
+        if (-not (Test-Path -LiteralPath $config.path) -or (Get-Hash $config.path) -ne $config.sha256) { throw "Native configuration changed after start: $($config.path)" }
+    } }
     return $run
 }
 
@@ -437,7 +488,15 @@ function Start-NativeBroker($Broker) {
     if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) { throw "Native executable not found: $executable" }
     $actualSha = Get-Hash $executable
     if ($actualSha -ne ([string]$Broker.executableSha256).ToLowerInvariant()) { throw 'Native executable hash does not match the pinned identity.' }
-    if (-not (Test-NativePortFree $Broker.mqttUri)) { throw "MQTT endpoint $($Broker.mqttUri) is already in use; stop the other broker first." }
+    $launchExecutable = $executable
+    if ($Broker.Contains('launcherExecutable') -and $Broker.launcherExecutable) {
+        $launchExecutable = Resolve-StandPath ([string]$Broker.launcherExecutable)
+        if (-not $Broker.Contains('launcherSha256') -or (Get-Hash $launchExecutable) -ne $Broker.launcherSha256) {
+            throw 'Native launcher hash does not match the pinned identity.'
+        }
+    }
+    $external = $Broker.Contains('lifecycle') -and $Broker.lifecycle -eq 'external'
+    if (-not $external -and -not (Test-NativePortFree $Broker.mqttUri)) { throw "MQTT endpoint $($Broker.mqttUri) is already in use; stop the other broker first." }
     $configs = @()
     foreach ($file in @($Broker.configFiles)) {
         $resolved = Resolve-StandPath ([string]$file)
@@ -451,6 +510,9 @@ function Start-NativeBroker($Broker) {
     $stdoutLog = Join-Path $logsDirectory 'broker.stdout.log'
     $stderrLog = Join-Path $logsDirectory 'broker.stderr.log'
     $affinityMask = if ($inventory.cpuMode -eq 'singleCorePinned') { [long](1L -shl [int]$Broker.cpuset) } else { $null }
+    if (-not $external -and $null -ne $affinityMask -and (((Get-Process -Id $PID).ProcessorAffinity.ToInt64() -band $affinityMask) -ne $affinityMask)) {
+        throw 'Requested native broker CPU is outside the available affinity mask.'
+    }
     # The broker's stdio MUST go to log files, detached from the controller's console: a child that
     # inherits the controller's stdout/stderr pipes keeps them open for its whole lifetime, and any
     # parent that reads the controller output to EOF (C# StandLifecycle, PowerShell captures) blocks
@@ -458,7 +520,7 @@ function Start-NativeBroker($Broker) {
     # so the launch goes through the system shell with file redirection (empirically verified: the
     # parent's output capture returns immediately and the broker survives the controller exit).
     $argumentLine = @($resolvedArgs | ForEach-Object { '"' + ([string]$_ -replace '"', '\"') + '"' }) -join ' '
-    $workingDirectory = if ($Broker.Contains('workingDirectory') -and $Broker.workingDirectory) { [IO.Path]::GetFullPath([string]$Broker.workingDirectory) } else { $logsDirectory }
+    $workingDirectory = if ($Broker.Contains('workingDirectory') -and $Broker.workingDirectory) { Resolve-StandPath ([string]$Broker.workingDirectory) } else { $logsDirectory }
     $quotedWorking = '"' + ($workingDirectory -replace '"', '\"') + '"'
     # The launch is written to a script file and executed, instead of being passed inline via
     # Start-Process -ArgumentList: PowerShell joins -ArgumentList elements with plain spaces and does
@@ -466,51 +528,119 @@ function Start-NativeBroker($Broker) {
     # broker never started (the launcher exited immediately and no MQTT port appeared). A script file has
     # exactly one argument, which both the POSIX shell and cmd.exe receive verbatim.
     $launcherPath = Join-Path $logsDirectory 'launch-broker.sh'
+    $nativeLauncherPid = $null
+    $nativeLauncherIdentity = $null
     if ($env:OS -eq 'Windows_NT') {
+        $call = if ([IO.Path]::GetExtension($launchExecutable) -in @('.bat','.cmd')) { 'call ' } else { '' }
         [IO.File]::WriteAllText((Join-Path $logsDirectory 'launch-broker.cmd'),
-            "@echo off`r`ncd /d $quotedWorking`r`nstart /b `"`" `"$executable`" $argumentLine > `"$stdoutLog`" 2> `"$stderrLog`"`r`n",
+            "@echo off`r`ncd /d $quotedWorking`r`n$call`"$launchExecutable`" $argumentLine > `"$stdoutLog`" 2> `"$stderrLog`" < NUL`r`n",
             [Text.UTF8Encoding]::new($false))
         $launcherFile = Join-Path $logsDirectory 'launch-broker.cmd'
     } else {
+        # POSIX single quoting keeps dollar signs, backticks and spaces literal in inventory arguments.
+        function Quote-NativeShell([string]$Value) { return "'" + $Value.Replace("'", "'" + '"' + "'" + '"' + "'") + "'" }
+        $argumentLine = @($resolvedArgs | ForEach-Object { Quote-NativeShell ([string]$_) }) -join ' '
+        $quotedWorking = Quote-NativeShell $workingDirectory
+        $quotedExecutable = Quote-NativeShell $launchExecutable
+        $quotedStdout = Quote-NativeShell $stdoutLog
+        $quotedStderr = Quote-NativeShell $stderrLog
         [IO.File]::WriteAllText($launcherPath,
-            "#!/bin/sh`ncd $quotedWorking || exit 1`nnohup `"$executable`" $argumentLine > `"$stdoutLog`" 2> `"$stderrLog`" < /dev/null &`n",
+            "#!/bin/sh`ncd $quotedWorking || exit 1`nnohup $quotedExecutable $argumentLine > $quotedStdout 2> $quotedStderr < /dev/null &`n",
             [Text.UTF8Encoding]::new($false))
         $launcherFile = $launcherPath
     }
-    try {
+    if (-not $external) { try {
         # The launcher shell exits as soon as the broker is detached. ProcessStartInfo.ArgumentList
         # quotes each element correctly (unlike Start-Process -ArgumentList), so a working directory
         # or executable path containing spaces survives intact.
         $launcher = [Diagnostics.ProcessStartInfo]::new()
         $launcher.FileName = if ($env:OS -eq 'Windows_NT') { Join-Path $env:SystemRoot 'System32\cmd.exe' } else { 'sh' }
         $launcher.UseShellExecute = $false
-        $launcher.ArgumentList.Add($launcherFile)
-        $process = [Diagnostics.Process]::Start($launcher)
-        if ($process) { $process.WaitForExit(30000) | Out-Null; $process.Dispose() }
-    } catch { throw "Native broker process failed to start: $($_.Exception.Message)" }
+        # Broker-specific environment is inherited by the shell and its process tree, without
+        # writing secrets or shell assignments into the launcher. EMQX requires numeric DEBUG;
+        # dotnet launch profiles can otherwise inject the unrelated value 'release'.
+        if ($Broker.name -eq 'EMQX') { $launcher.Environment['DEBUG'] = '0' }
+        if ($Broker.Contains('environment') -and $Broker.environment) {
+            foreach ($pair in $Broker.environment.GetEnumerator()) {
+                if ([string]$pair.Key -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') { throw 'Invalid native broker environment name.' }
+                $launcher.Environment[[string]$pair.Key] = [string]$pair.Value
+            }
+        }
+        if ($env:OS -eq 'Windows_NT') {
+            # cmd.exe without /c opens a prompt instead of running the batch file.
+            # A relative filename avoids cmd's /c quote stripping for paths with spaces.
+            $launcher.WorkingDirectory = $logsDirectory
+            $launcher.ArgumentList.Add('/d')
+            $launcher.ArgumentList.Add('/c')
+            $launcher.ArgumentList.Add('launch-broker.cmd')
+        } else { $launcher.ArgumentList.Add($launcherFile) }
+        if ($env:OS -eq 'Windows_NT') {
+            # OpenSSH kills processes in its Windows job when a command finishes.
+            # WMI creates the launcher outside that job, under the caller's token.
+            # Keep environment values in memory; never write them into logs/scripts.
+            $startup = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{
+                ShowWindow = [uint16]0
+                EnvironmentVariables = [string[]]@($launcher.Environment.GetEnumerator() | ForEach-Object { $_.Key + '=' + $_.Value })
+            }
+            $created = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
+                CommandLine = '"' + $launcher.FileName + '" /d /c launch-broker.cmd'
+                CurrentDirectory = $logsDirectory
+                ProcessStartupInformation = $startup
+            }
+            if ($created.ReturnValue -ne 0) { throw "Windows native launcher creation failed (WMI return $($created.ReturnValue))." }
+            $process = Get-Process -Id ([int]$created.ProcessId) -ErrorAction SilentlyContinue
+            if ($process) {
+                $nativeLauncherPid = [string]$process.Id
+                $nativeLauncherIdentity = Get-NativeProcessIdentity $process
+                $process.Dispose()
+                $process = $null
+            }
+        } else { $process = [Diagnostics.Process]::Start($launcher) }
+        if ($process) {
+            try {
+                if (-not $process.WaitForExit(30000)) { $process.Kill($true); throw 'Native launcher did not detach within 30 seconds.' }
+                # WMI-created processes may not expose an exit code through Get-Process.
+                # Listener identity below remains the authoritative startup check.
+                $launcherExitCode = $process.ExitCode
+                if ($null -ne $launcherExitCode -and $launcherExitCode -ne 0) { throw "Native launcher exited with code $launcherExitCode." }
+            } finally { $process.Dispose() }
+        }
+    } catch { throw "Native broker process failed to start: $($_.Exception.Message)" } }
     # Readiness + identity: the broker must own its MQTT port (the port was verified free above, so
     # the first listener is ours). The port also uniquely identifies the broker pid across the
     # shell-detached process tree.
     $port = [int]([Uri]$Broker.mqttUri).Port
     $brokerPid = $null
-    $deadline = (Get-Date).AddSeconds(20)
+    $startTimeout = if ($Broker.Contains('startTimeoutSeconds')) { [int]$Broker.startTimeoutSeconds } else { 60 }
+    if ($startTimeout -lt 1 -or $startTimeout -gt 300) { throw 'Native startTimeoutSeconds must be between 1 and 300.' }
+    $deadline = (Get-Date).AddSeconds($startTimeout)
     while ((Get-Date) -lt $deadline) {
         $brokerPid = Get-NativeListenerPid $port
         if ($brokerPid) { break }
         Start-Sleep -Milliseconds 250
     }
-    if (-not $brokerPid) { throw "Native broker did not bind its MQTT port ($($Broker.mqttUri)) within 20s; check its log in $logsDirectory." }
+    if (-not $brokerPid) {
+        if ($nativeLauncherPid) { Stop-NativeWindowsLauncher $nativeLauncherPid $nativeLauncherIdentity }
+        throw "Native broker did not bind its MQTT port ($($Broker.mqttUri)) within ${startTimeout}s; check its log in $logsDirectory."
+    }
     $process = Get-Process -Id $brokerPid -ErrorAction SilentlyContinue
     if (-not $process) { throw "Native broker pid $brokerPid resolved from the port listener but the process is not visible." }
+    if (-not $process.Path -or (Resolve-RealPath $process.Path) -ine (Resolve-RealPath $executable) -or (Get-Hash $process.Path) -ne $actualSha) {
+        throw 'Native MQTT listener executable does not match the pinned identity.'
+    }
     # CPU pinning via Process.ProcessorAffinity is cross-platform (.NET Core: Windows mask / sched_setaffinity).
     # It is applied right after start; the workload begins only after health+clock, so no unpinned work is measured.
     if ($null -ne $affinityMask) {
-        try { $process.ProcessorAffinity = [IntPtr]$affinityMask } catch { throw "Failed to pin native broker to the requested CPU set: $($_.Exception.Message)" }
+        if ($external) {
+            if ($process.ProcessorAffinity.ToInt64() -ne $affinityMask) { throw 'External native broker affinity differs from the inventory; pin it manually before attaching.' }
+        } else {
+            try { $process.ProcessorAffinity = [IntPtr]$affinityMask } catch { throw "Failed to pin native broker to the requested CPU set: $($_.Exception.Message)" }
+        }
     }
     # Best-effort memory limit: a Linux cgroup survives the controller exit (kernel state); Windows job objects
     # kill processes when the last handle closes, which is unsafe in a per-action controller - recorded honestly.
     $memoryEnforcement = 'not-enforced-native'
-    if ($env:OS -eq 'Linux' -and (Test-Path '/sys/fs/cgroup/cgroup.controllers')) {
+    if (-not $external -and $IsLinux -and (Test-Path '/sys/fs/cgroup/cgroup.controllers')) {
         try {
             $group = "/sys/fs/cgroup/mqttbenchmark-$($process.Id)"
             [void][IO.Directory]::CreateDirectory($group)
@@ -519,12 +649,17 @@ function Start-NativeBroker($Broker) {
             $memoryEnforcement = 'cgroup-v2'
         } catch { $memoryEnforcement = "cgroup-v2-unavailable: $($_.Exception.Message)" }
     }
-    $inputPaths = @($ConfigPath, $PSCommandPath, $executable) + @($configs | ForEach-Object { $_.path }) | Sort-Object -Unique
+    $inputPaths = @($ConfigPath, $PSCommandPath, $executable, $launchExecutable) + @($configs | ForEach-Object { $_.path }) | Sort-Object -Unique
     $hashes = @($inputPaths | ForEach-Object { [ordered]@{ path = $_; sha256 = Get-Hash $_; scope = 'start-input' } })
     Write-JsonFile ([ordered]@{
         broker = $Broker.name; context = $context; runtime = 'native'
         unitId = [string]$process.Id
         imageId = $actualSha; requestedImage = $executable
+        launcherExecutable = $launchExecutable; launcherSha256 = Get-Hash $launchExecutable
+        nativeLauncherPid = $nativeLauncherPid; nativeLauncherStartIdentity = $nativeLauncherIdentity
+        externallyManaged = $external
+        processStartTimeUtc = $process.StartTime.ToUniversalTime().ToString('O')
+        processStartIdentity = Get-NativeProcessIdentity $process
         effectiveConfigs = $configs
         inputHashes = $hashes
         affinityCpus = if ($inventory.cpuMode -eq 'singleCorePinned') { [string]$Broker.cpuset } else { 'all' }
@@ -638,13 +773,17 @@ function Write-FenceNative($Broker) {
 
 function Stop-NativeBroker($Broker, [switch]$AllowAlreadyStopped) {
     $run = $null
-    try { $run = Get-NativeRun $Broker } catch { if (-not $AllowAlreadyStopped) { throw } }
+    try { $run = Get-NativeRun $Broker -SkipConfigValidation -AllowStopped } catch { if (-not $AllowAlreadyStopped) { throw } }
     if (-not $run) { return }
+    if ($run.Contains('externallyManaged') -and $run.externallyManaged) { return }
     $process = Get-Process -Id ([int]$run.unitId) -ErrorAction SilentlyContinue
     if ($process) {
-        $process.Kill()
+        $process.Kill($true)
         $process.WaitForExit(5000) | Out-Null
         if (-not $process.HasExited) { throw 'Native broker did not stop after termination.' }
+    }
+    if ($run.Contains('nativeLauncherPid') -and $run.nativeLauncherPid) {
+        Stop-NativeWindowsLauncher $run.nativeLauncherPid ([string]$run.nativeLauncherStartIdentity)
     }
 }
 function Write-CaptureNative($Broker) {
@@ -656,7 +795,8 @@ function Write-CaptureNative($Broker) {
     Write-JsonFile ([ordered]@{
         host = [ordered]@{ os = [Runtime.InteropServices.RuntimeInformation]::OSDescription; architecture = [Runtime.InteropServices.RuntimeInformation]::OSArchitecture; machine = [Environment]::MachineName }
         executable = [ordered]@{ path = $run.requestedImage; sha256 = $run.imageId }
-        brokerVersion = $version
+        brokerVersion = if ($Broker.Contains('brokerVersion')) { $Broker.brokerVersion } else { $null }
+        executableVersion = $version
         runtimeVersion = "PowerShell $($PSVersionTable.PSVersion) controller"
         affinityCpus = $run.affinityCpus
         memoryLimitBytes = [long]$run.memoryLimitBytes
@@ -669,9 +809,10 @@ function Write-CaptureNative($Broker) {
     $ndjsonPath = Join-Path $OutputDirectory 'telemetry.ndjson'
     $samples = [Collections.Generic.List[object]]::new()
     $previous = $null
+    $captureStart = [Diagnostics.Stopwatch]::GetTimestamp()
     for ($i = 0; $i -lt $CaptureSeconds; $i++) {
         # Monotonic deadlines from the shared epoch: scheduling jitter does not shift the sample grid.
-        $deadline = $epoch + [long]($i * $frequency)
+        $deadline = $captureStart + [long]($i * $frequency)
         while ([Diagnostics.Stopwatch]::GetTimestamp() -lt $deadline) { Start-Sleep -Milliseconds 20 }
         $monotonic = ([Diagnostics.Stopwatch]::GetTimestamp() - $epoch) / $frequency
         $process = Get-Process -Id ([int]$run.unitId) -ErrorAction SilentlyContinue
@@ -701,18 +842,22 @@ function Write-CaptureNative($Broker) {
             connections = (Get-NativeConnections $port)
             connectionsScope = 'host-shared'
         }
-        ConvertTo-Json -InputObject $sample -Compress | Add-Content -LiteralPath $ndjsonPath
+        $sampleLine = ConvertTo-Json -InputObject $sample -Compress
+        $sampleLine | Add-Content -LiteralPath $ndjsonPath -Encoding utf8NoBOM
+        Publish-NativeArtifact $ndjsonPath $sampleLine -Append
         $samples.Add($sample)
         $previous = [ordered]@{ monotonic = $monotonic; cpuTotalSeconds = $cpuTotalSeconds }
         if ($samples.Count -eq $CaptureSeconds) {
             $endedPath = Join-Path $OutputDirectory 'sampler-ended.json'
             Write-JsonFile ([ordered]@{ lastSampleTimestamp = $sample.timestamp; lastSampleMonotonicSeconds = $sample.monotonicSeconds; sampleCount = $samples.Count; controllerObservedUtc = [DateTimeOffset]::UtcNow.ToString('O'); unitId = [string]$run.unitId }) "$endedPath.tmp"
             Move-Item -LiteralPath "$endedPath.tmp" -Destination $endedPath
+            Publish-NativeArtifact $endedPath
         }
         if ($samples.Count -eq 1) {
             $readyPath = Join-Path $OutputDirectory 'telemetry-ready.json'
             Write-JsonFile ([ordered]@{ firstSampleTimestamp = $sample.timestamp; firstSampleMonotonicSeconds = $sample.monotonicSeconds; controllerObservedUtc = [DateTimeOffset]::UtcNow.ToString('O'); unitId = [string]$run.unitId }) "$readyPath.tmp"
             Move-Item -LiteralPath "$readyPath.tmp" -Destination $readyPath
+            Publish-NativeArtifact $readyPath
         }
     }
     if ($samples.Count -lt $CaptureSeconds) { throw 'Telemetry sampler returned fewer samples than requested.' }
@@ -813,10 +958,18 @@ try {
     $ConfigPath = [IO.Path]::GetFullPath($ConfigPath)
     $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
     $inventory = Get-Content -Raw -LiteralPath $ConfigPath | ConvertFrom-Json -AsHashtable
+    $selectedBrokers = @($inventory.brokers | Where-Object { $_.name -eq $inventory.activeBroker })
+    $selectedHost = if ($selectedBrokers.Count -eq 1 -and $selectedBrokers[0].Contains('nativeHost')) { $selectedBrokers[0].nativeHost }
+        elseif ($inventory.Contains('nativeHost')) { $inventory.nativeHost } else { $null }
+    if (-not $NativeWorker -and $selectedHost -and $selectedBrokers.Count -eq 1 -and (Get-BrokerRuntime $selectedBrokers[0]) -eq 'native') {
+        . (Join-Path $PSScriptRoot 'RemoteNativeStand.ps1')
+        Invoke-RemoteNativeStand $inventory $selectedHost
+        exit 0
+    }
     Test-Inventory $inventory
     $broker = @($inventory.brokers | Where-Object { $_.name -eq $inventory.activeBroker })[0]
     $context = if ($inventory.deploymentMode -eq 'distributedHosts') { Required $broker 'dockerContext' } else { $inventory.dockerContext }
-    $brokersRoot = Get-BrokersRoot
+    $brokersRoot = if ((Get-BrokerRuntime $broker) -eq 'native') { Join-Path $script:RepositoryRoot 'docker/brokers' } else { Get-BrokersRoot }
     # Cleanup must remain possible after a source edit or failed build. Inventory validation still applies.
     $build = if ($Action -notin @('pull', 'stop', 'reset') -and (Get-BrokerRuntime $broker) -eq 'container') { Assert-BuildIdentity $broker } else { $null }
     $native = (Get-BrokerRuntime $broker) -eq 'native'

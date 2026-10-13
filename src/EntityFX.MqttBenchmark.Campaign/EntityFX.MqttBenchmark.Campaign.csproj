@@ -8,6 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="EntityFX.MqttBenchmark.Tests" />
     <!-- MQTTnet is used directly by MqttCampaignRunner; declared explicitly (also flows transitively via the core). -->
     <PackageReference Include="MQTTnet.Extensions.ManagedClient" Version="4.3.3.952" />
   </ItemGroup>

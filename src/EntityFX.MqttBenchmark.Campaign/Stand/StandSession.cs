@@ -88,6 +88,10 @@ public sealed class StandSession : IAsyncDisposable
             }
             await lifecycle.InvokeAsync("validate", sourcePath, Path.GetDirectoryName(sourcePath)!, 1, cancellationToken);
             inventory["campaign"] = new JsonObject { ["deploymentMode"] = config.DeploymentMode, ["cpuMode"] = config.CpuMode };
+            // Distinct controllers can use identical local output paths. A per-session owner keeps
+            // a failed remote start from stopping a different controller's active broker.
+            if (inventory["nativeHost"] != null || selected["nativeHost"] != null)
+                inventory["nativeSessionId"] = Guid.NewGuid().ToString("N");
             inventory["activeBroker"] = broker;
             foreach (var item in brokers) item!["loaded"] = item["name"]!.GetValue<string>() == broker;
             CampaignJson.WriteNew(selectedPath, inventory);

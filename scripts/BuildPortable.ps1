@@ -1,8 +1,8 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Assembles a portable MqttBenchmark deployment package (CLI + stand script + config + docker
-    broker definitions + DEPLOYMENT.md) under dist\mqtt-benchmark.
+    Assembles a portable native MqttBenchmark package (CLI, worker scripts, v3 config,
+    tracked broker assets and documentation) under dist\mqtt-benchmark.
 .EXAMPLE
     .\scripts\BuildPortable.ps1                 # publish CLI + assemble the package
     .\scripts\BuildPortable.ps1 -SkipPublish    # assemble only (CLI already built)
@@ -40,11 +40,21 @@ else {
 
 Write-Host "[2/4] Stand controller script -> $scriptsDir"
 Copy-Into (Join-Path $repo 'scripts\BrokerStand.ps1') $scriptsDir
+Copy-Into (Join-Path $repo 'scripts\RemoteNativeStand.ps1') $scriptsDir
+Copy-Into (Join-Path $repo 'scripts\PinNativeExecutable.ps1') $scriptsDir
+Copy-Into (Join-Path $repo 'scripts\NewNativeStand.ps1') $scriptsDir
+Copy-Into (Join-Path $repo 'scripts\MergeNativeStands.ps1') $scriptsDir
+Copy-Into (Join-Path $repo 'scripts\RunNativeCampaign.ps1') $scriptsDir
 
-Write-Host "[3/4] Campaign + stand config and docker broker definitions"
+Write-Host "[3/4] V3 campaign, tracked broker assets and documentation"
 Copy-Into (Join-Path $repo 'config\benchmark-campaign.v3.json') $configDir
-Copy-Into (Join-Path $repo 'config\broker-stand.v1.json') $configDir
-Copy-Into (Join-Path $repo 'docker\brokers') $dockerDir
+$assets = @(& git -C $repo ls-files -- docker/brokers)
+if ($LASTEXITCODE -ne 0 -or -not $assets.Count) { throw 'Cannot enumerate tracked broker assets.' }
+foreach ($asset in $assets) {
+    $target = Join-Path $OutputRoot $asset
+    Copy-Into (Join-Path $repo $asset) (Split-Path $target)
+}
+Copy-Into (Join-Path $repo 'docs') $OutputRoot
 
 Write-Host "[4/4] Deployment instructions -> $OutputRoot"
 Copy-Into (Join-Path $repo 'DEPLOYMENT.md') $OutputRoot

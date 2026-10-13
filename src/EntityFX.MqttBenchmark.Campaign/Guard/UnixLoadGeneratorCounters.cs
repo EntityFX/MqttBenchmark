@@ -39,21 +39,24 @@ public sealed class UnixLoadGeneratorCounters : ILoadGeneratorCounters
 
     /// <summary>Имя интерфейса, по которому Linux маршрутизирует адрес (наиболее специфичная маска).</summary>
     internal static string ResolveRouteInterface(System.Net.IPAddress destination)
+        => ResolveRouteInterface(destination, File.ReadLines("/proc/net/route").Skip(1));
+
+    internal static string ResolveRouteInterface(System.Net.IPAddress destination, IEnumerable<string> routes)
     {
         var target = System.BitConverter.ToUInt32(destination.GetAddressBytes(), 0); // /proc/net/route: little-endian hex.
         var bestMask = 0u;
         var bestInterface = "";
-        foreach (var line in File.ReadLines("/proc/net/route").Skip(1))
+        foreach (var line in routes)
         {
-            var fields = line.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            if (fields.Length < 7) continue;
+            var fields = line.Trim().Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+            if (fields.Length < 8) continue;
             if (!uint.TryParse(fields[1], System.Globalization.NumberStyles.HexNumber, null, out var routeDestination) ||
-                !uint.TryParse(fields[6], System.Globalization.NumberStyles.HexNumber, null, out var mask))
+                !uint.TryParse(fields[7], System.Globalization.NumberStyles.HexNumber, null, out var mask))
                 continue;
             if ((routeDestination & mask) != (target & mask)) continue;
-            if (mask > bestMask) { bestMask = mask; bestInterface = fields[0]; }
+            if (string.IsNullOrEmpty(bestInterface) || mask > bestMask) { bestMask = mask; bestInterface = fields[0]; }
         }
-        if (bestMask == 0) throw new InvalidDataException($"No Linux route covers broker address {destination}.");
+        if (string.IsNullOrEmpty(bestInterface)) throw new InvalidDataException($"No Linux route covers broker address {destination}.");
         return bestInterface;
     }
     /// <summary>Счётчики RX/TX байтов интерфейса из <c>/proc/net/dev</c>.</summary>
@@ -77,9 +80,15 @@ public sealed class UnixLoadGeneratorCounters : ILoadGeneratorCounters
     internal static long ReadLinkSpeedBits(string interfaceName)
     {
         var value = File.ReadAllText($"/sys/class/net/{interfaceName}/speed").Trim();
+        return ParseLinkSpeedBits(value, interfaceName);
+    }
+
+    internal static long ParseLinkSpeedBits(string value, string interfaceName)
+    {
         if (!long.TryParse(value, out var speed) || speed <= 0)
             throw new InvalidDataException($"Interface {interfaceName} does not expose a positive link speed (sysfs value: '{value}').");
-        return speed * 8;
+        // Linux sysfs reports link speed in megabits per second, not bytes per second.
+        return checked(speed * 1_000_000);
     }
 
     private static LoadGeneratorInterface Select(string interfaceName, System.Net.IPAddress destination)
@@ -97,8 +106,8 @@ public sealed class UnixLoadGeneratorCounters : ILoadGeneratorCounters
             destination.ToString(), adapter.NetworkInterfaceType.ToString());
         var hardware = new UnixAdapterMetadataProvider().Read(ifindex);
         if (hardware.HardwareInterface != true || hardware.Virtual != false || hardware.Error != null ||
-            hardware.InterfaceIndex != ifindex || !System.Guid.TryParse(hardware.InterfaceId, out var metadataId) ||
-            !System.Guid.TryParse(selected.Id, out var selectedId) || metadataId != selectedId)
+            hardware.InterfaceIndex != ifindex || string.IsNullOrWhiteSpace(hardware.InterfaceId) ||
+            !string.Equals(hardware.InterfaceId, selected.Id, StringComparison.Ordinal))
             throw new LoadGeneratorHardwareException(selected);
         return selected with { HardwareEvidence = hardware };
     }
@@ -118,7 +127,7 @@ public sealed class UnixAdapterMetadataProvider : IAdapterMetadataProvider
         var interfaceName = ResolveNameByIndex(interfaceIndex);
         var isVirtual = System.Text.RegularExpressions.Regex.IsMatch(interfaceName,
             @"^(veth|tap|docker|br-|virbr|tun|lo|dummy|ifb|ip6tnl|ipip|gre|sit)");
-        var isHardware = File.Exists($"/sys/class/net/{interfaceName}/device");
+        var isHardware = Directory.Exists($"/sys/class/net/{interfaceName}/device");
         var id = NetworkInterface.GetAllNetworkInterfaces()
             .FirstOrDefault(x => string.Equals(x.Name, interfaceName, StringComparison.Ordinal))?.Id ?? "";
         return new AdapterHardwareEvidence(interfaceIndex, id,

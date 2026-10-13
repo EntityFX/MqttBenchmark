@@ -1,105 +1,18 @@
 # MqttBenchmark
 
-The four-broker stand uses [campaign schema v3](docs/campaign-v3.md), with 288 keys,
-identified exact-size payloads, immutable retry/resume, protocol preflight and
-`broker-observations.v3.json` for MqttY calibration. Start with
-`config/benchmark-campaign.v3.json` and `config/broker-stand.v1.json`.
+Измерение MQTT-брокеров и воспроизводимые кампании **v3** для калибровки MqttY: 288 успешных запусков, 96 наблюдаемых точек, exact-ID delivery accounting, immutable retry/resume и SHA-256 provenance.
 
-## Running locally without Docker
+Начните с [индекса документации](docs/README.md): установка без Docker, подготовка Ubuntu/ALT/Windows, локальный и SSH-стенд, ручной и управляемый запуск, архитектура и метрики. Aedes/Mosquitto/ActiveMQ Classic запускаются непосредственно в Linux/Windows; EMQX — в Linux, на Windows внутри Ubuntu WSL2. Статус фактических проверок отделён от поддерживаемого маршрута.
 
-Brokers do not have to run in containers. A stand entry with `"runtime": "native"` starts the
-broker as an ordinary local process, and the same commands work on Linux and Windows. The
-supported local profile needs only the .NET 6 runtime, PowerShell 7 (`pwsh`), and a local
-broker executable — for example Aedes, which runs on Node.js straight from the committed
-lockfile:
-
-```bash
-npm ci --prefix docker/brokers/aedes
-pwsh scripts/PinNativeExecutable.ps1 -StandPath config/broker-stand.native.json -Executable "$(command -v node)"
-
-dotnet run --project src/EntityFX.MqttBenchmark.Cli -- preflight \
-  --config config/benchmark-campaign.native.json \
-  --stand  config/broker-stand.native.json \
-  --output results/preflight-local \
-  --benchmark-repo .
-```
-
-Set `MQB_STAND_SHELL` if `pwsh` is not on `PATH`. Full instructions, including the portable
-`${MqttBenchmarkRoot}` path token, are in [DEPLOYMENT.md](DEPLOYMENT.md).
-
-Статистическая обработка и выводы — в
-[docs/mosquitto-run-statistics.md](docs/mosquitto-run-statistics.md).
-A complete 72-key Mosquitto run in this profile (Mosquitto 2.0.15, no Docker) and the
-analysis of its results are in [docs/mosquitto-local-run-analysis.md](docs/mosquitto-local-run-analysis.md).
-
-## Legacy schema v2
-
-The reproducible calibration pipeline is driven by
-`config/benchmark-matrix.v2.json`. The versioned default expands to four brokers,
-two exact payload sizes, three QoS levels, eight client counts and ten repeats
-(1920 immutable runs).
-
-Both repositories must have no tracked changes when aggregation starts. This
-guarantees that the recorded commit SHA identifies the code that produced the
-profile; untracked result directories do not block aggregation.
-
-Preview the matrix without contacting brokers:
+Из корня проекта в PowerShell 7, после подготовки брокера и spec:
 
 ```powershell
-dotnet run --project src/EntityFX.MqttBenchmark.Cli -- matrix `
-  --config config/benchmark-matrix.v2.json `
-  --output results/raw `
-  --dry-run
+./scripts/NewNativeStand.ps1 -BrokerSpecPath config/brokers.spec.local.json `
+  -StandPath config/broker-stand.local.json -CampaignPath config/campaign.local.json
+./scripts/RunNativeCampaign.ps1 -ConfigPath config/campaign.local.json `
+  -StandPath config/broker-stand.local.json -CampaignDirectory artifacts/pilot-001 -Pilot
 ```
 
-Run a campaign. Each completed point is written immediately with `FileMode.CreateNew`
-under a unique campaign directory, so an existing raw result is never overwritten:
+Pilot не даёт полного набора для калибровки. Запуск требует чистых tracked исходников; примеры настройки и ручной CLI-эквивалент — в [локальном руководстве](docs/local-stand.md). Контейнерный config/broker-stand.v1.json не является native-инвентарём.
 
-```powershell
-dotnet run --project src/EntityFX.MqttBenchmark.Cli -- matrix `
-  --config config/benchmark-matrix.v2.json `
-  --output results/raw `
-  --campaign dissertation-20260909
-```
-
-For an infrastructure smoke test, add `--broker Mosquitto --max-runs 1`.
-The full sequential matrix needs at least 18.7 hours for its configured warm-up and
-measurement windows, before connection and delivery-drain overhead.
-
-Run the complete matrix and aggregate it into a versioned runtime profile with one
-command (the MqttY repository must be clean so its commit can be recorded):
-
-```powershell
-./scripts/RunDissertationMatrix.ps1 `
-  -Campaign dissertation-20260909 `
-  -MqttYRepository ../mqtty
-```
-
-The same command runs nightly and on demand in `dissertation-matrix.yml` on a
-self-hosted Windows runner that can reach all four configured broker endpoints.
-
-Aggregate one complete campaign and generate the runtime profile:
-
-```powershell
-dotnet run --project src/EntityFX.MqttBenchmark.Cli -- aggregate `
-  --config config/benchmark-matrix.v2.json `
-  --raw results/raw/dissertation-20260909 `
-  --output results/aggregated/dissertation-20260909 `
-  --mqtt-y-repo C:/projects/asp/mqtty `
-  --benchmark-repo .
-```
-
-The aggregate command requires exact matrix coverage and repeats 1 through 10 for
-every point. It writes `aggregated.csv`, `aggregated.json`, and
-`broker-benchmark.v2.json` using create-new semantics. The profile records both Git
-SHAs and SHA-256 for every input CSV.
-
-Metric definitions are fixed:
-
-- `CompletedRps = ok / measurementSeconds`
-- `PublishFailureRate = failed / requestCount`
-- `DeliveryLossRate = 1 - received / ok` for completed publishes; it is zero when
-  no publish completed because conditional delivery loss is then unobservable.
-
-QoS 1/2 latency knots are nearest-rank values from `PublishAsync` completion times.
-QoS 0 latency is always `null` and is excluded from fidelity calibration.
+[Переносимый пакет](DEPLOYMENT.md) · [Калибровка MqttY](../mqtty/doc/calibration-v3.md) · [Исторические результаты](../diss/doc/results-and-evidence.md).
