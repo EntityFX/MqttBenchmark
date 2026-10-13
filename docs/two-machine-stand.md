@@ -82,6 +82,8 @@ ssh -i "$env:USERPROFILE/.ssh/mqtty_stand" researcher@192.0.2.20
 
 Это объект `nativeHost`, а не полный stand. Для Windows broker host замените repositoryRoot/workRoot на `C:/...`; для Windows контроллера identityFile — на `C:/Users/.../.ssh/mqtty_stand`. `knownHostsFile` и `sshExecutable` можно задать явно. Приватный ключ не включается в JSON; в нём только путь. Все brokers в таком инвентаре имеют runtime native. Проще добавить nativeHost сразу, передав генератору `-NativeHostPath <json-file>`; содержимое должно отражать пути будущего контроллера.
 
+На Windows-контроллере transport по умолчанию выбирает `usr/bin/ssh.exe` из установленного Git for Windows, обнаруженного через `git` на PATH. Системный OpenSSH остаётся сервером на Windows broker host. Это разные роли: в проверенном Windows SSH-сеансе системный клиент9.5p2 зависал на перенаправленном stdin, а клиент Git10.5p1 передал worker успешно. Явный `nativeHost.sshExecutable`, например `C:/Program Files/Git/usr/bin/ssh.exe`, имеет приоритет; пробелы в этом локальном пути допустимы. Если Git SSH не найден, используется `ssh` на PATH — его передачу stdin нужно проверить до кампании. На Linux по умолчанию используется `ssh` на PATH.
+
 Для подготовки руками используйте структуру [инвентаря](local-stand.md), вычислите SHA-256 на broker host, заполните launcher identity и добавьте тот же nativeHost. Режимы CPU/deployment обязаны совпадать с кампанией. Один удалённый host использует `singleHostSequential`; `distributedHosts` обозначает несколько broker hosts, не просто пару «контроллер + стенд». [Маршрут 3+ машин](deployment-layouts.md).
 
 ## 5. Запуск через CLI

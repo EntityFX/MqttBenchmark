@@ -15,6 +15,16 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 
+# Reusing an assembled directory would retain removed guides and obsolete broker assets.
+# SkipPublish accepts only a pre-published bin directory; the package itself is always new.
+if (Test-Path -LiteralPath $OutputRoot) {
+    if (-not (Test-Path -LiteralPath $OutputRoot -PathType Container)) { throw 'OutputRoot must be a directory.' }
+    $existing = @(Get-ChildItem -LiteralPath $OutputRoot -Force)
+    if ($existing.Count -and (-not $SkipPublish -or @($existing | Where-Object { $_.Name -ne 'bin' -or -not $_.PSIsContainer }).Count)) {
+        throw 'OutputRoot contains an existing package. Choose a new output directory; obsolete files must not enter the new package.'
+    }
+}
+
 $repo       = Split-Path $PSScriptRoot
 $cliProj    = Join-Path $repo 'src\EntityFX.MqttBenchmark.Cli\EntityFX.MqttBenchmark.Cli.csproj'
 $binDir     = Join-Path $OutputRoot 'bin'

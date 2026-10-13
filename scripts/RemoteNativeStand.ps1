@@ -36,6 +36,20 @@ function Invoke-RemoteNativeStand($Inventory, $HostConfig) {
     $port = if ($hostConfig.Contains('port')) { [int]$hostConfig.port } else { 22 }
     if ($port -lt 1 -or $port -gt 65535) { throw 'Invalid native SSH port.' }
     $ssh = if ($hostConfig.Contains('sshExecutable')) { [string]$hostConfig.sshExecutable } else { 'ssh' }
+    if ($IsWindows -and -not $hostConfig.Contains('sshExecutable')) {
+        # Win32 OpenSSH can stall on redirected stdin in a Windows SSH session.
+        # Git for Windows supplies a client that supports our streamed worker protocol.
+        $gitCommand=Get-Command git -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($gitCommand) {
+            $directory=[IO.Path]::GetDirectoryName($gitCommand.Source)
+            foreach ($level in 1..3) {
+                $candidate=Join-Path $directory 'usr/bin/ssh.exe'
+                if (Test-Path -LiteralPath $candidate -PathType Leaf) { $ssh=$candidate; break }
+                $directory=[IO.Path]::GetDirectoryName($directory)
+                if (-not $directory) { break }
+            }
+        }
+    }
     $shell = if ($hostConfig.Contains('pwshExecutable')) { [string]$hostConfig.pwshExecutable } else { 'pwsh' }
     # This name is interpolated by the remote OS shell; paths with spaces can use a pwsh PATH alias.
     if ($shell -notmatch '^[a-zA-Z0-9_./:\\-]+$') { throw 'Remote pwshExecutable must be a shell-safe path without spaces (or pwsh on PATH).' }
