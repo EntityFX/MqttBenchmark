@@ -510,8 +510,27 @@ function Start-NativeBroker($Broker) {
     $stdoutLog = Join-Path $logsDirectory 'broker.stdout.log'
     $stderrLog = Join-Path $logsDirectory 'broker.stderr.log'
     $affinityMask = if ($inventory.cpuMode -eq 'singleCorePinned') { [long](1L -shl [int]$Broker.cpuset) } else { $null }
-    if (-not $external -and $null -ne $affinityMask -and (((Get-Process -Id $PID).ProcessorAffinity.ToInt64() -band $affinityMask) -ne $affinityMask)) {
-        throw 'Requested native broker CPU is outside the available affinity mask.'
+    if (-not $external -and $null -ne $affinityMask) {
+        $availableMask=(Get-Process -Id $PID).ProcessorAffinity.ToInt64()
+        if ($IsWindows) {
+            # WMI creates the broker independently of the controller's CPU partition.
+            # Use the system mask; the controller may intentionally run on another CPU.
+            if (-not ('MqbNativeAffinity' -as [type])) {
+                Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class MqbNativeAffinity {
+    [DllImport("kernel32.dll", SetLastError=true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool GetProcessAffinityMask(IntPtr process, out UIntPtr processMask, out UIntPtr systemMask);
+}
+'@
+            }
+            $processMask=[UIntPtr]::Zero; $systemMask=[UIntPtr]::Zero
+            if (-not [MqbNativeAffinity]::GetProcessAffinityMask((Get-Process -Id $PID).Handle,[ref]$processMask,[ref]$systemMask)) { throw 'Could not query the Windows system affinity mask.' }
+            $availableMask=[BitConverter]::ToInt64([BitConverter]::GetBytes($systemMask.ToUInt64()),0)
+        }
+        if (($availableMask -band $affinityMask) -ne $affinityMask) { throw 'Requested native broker CPU is outside the available affinity mask.' }
     }
     # The broker's stdio MUST go to log files, detached from the controller's console: a child that
     # inherits the controller's stdout/stderr pipes keeps them open for its whole lifetime, and any

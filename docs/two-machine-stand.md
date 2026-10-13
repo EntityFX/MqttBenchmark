@@ -9,7 +9,7 @@
 | Linux | Windows | OpenSSH Server → pwsh → Aedes/Mosquitto/Classic; для полного набора — SSH в Ubuntu WSL2 |
 | Windows | Windows | Аналогично; разные физические машины и доступные MQTT-порты |
 
-Общий процесс поддерживает обе ОС. Linux SSH transport проверен реальным изолированным OpenSSH. Linux-контроллер → физический Windows-стенд прошёл короткие кампании Mosquitto/Aedes/Classic; обратное направление, Windows → Windows и WSL требуют отдельной acceptance. WSL2 — Linux guest на Windows, его использование фиксируется в manifest и не маскируется под native Windows. [Статусы проверок](../../diss/doc/validation.md).
+Общий процесс поддерживает обе ОС. Linux SSH transport проверен реальным изолированным OpenSSH. Linux-контроллер → физический Windows-стенд прошёл короткие кампании Mosquitto/Aedes/Classic; Windows-контроллер → физический Linux-стенд проверен для Mosquitto; Windows → Windows и WSL требуют отдельной acceptance. WSL2 — Linux guest на Windows, его использование фиксируется в manifest и не маскируется под native Windows. [Статусы проверок](../../diss/doc/validation.md).
 
 ## 1. Подготовить роли
 

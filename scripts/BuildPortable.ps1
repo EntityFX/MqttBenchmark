@@ -39,6 +39,9 @@ function Copy-Into([string]$src, [string]$dstDir) {
 }
 
 if ($SkipPublish) {
+    foreach ($file in @('EntityFX.MqttBenchmark.Cli.dll', 'EntityFX.MqttBenchmark.Cli.deps.json', 'EntityFX.MqttBenchmark.Cli.runtimeconfig.json')) {
+        if (-not (Test-Path -LiteralPath (Join-Path $binDir $file) -PathType Leaf)) { throw "SkipPublish requires a published CLI in bin: $file" }
+    }
     Write-Host "[1/4] Skipping CLI publish (-SkipPublish)." -ForegroundColor DarkGray
 }
 else {
