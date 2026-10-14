@@ -129,6 +129,16 @@ public static class CampaignCommands
         var maxAttempts = parsed.MaxAttempts ?? config.MaxAttempts;
         using (var journal = CampaignJournal.Open(parsed.Directory, campaignIdentity, options.ContainsKey("resume")))
         {
+            if (options.TryGetValue("archive-root", out var existingArchiveRoot) && !string.IsNullOrWhiteSpace(existingArchiveRoot))
+            {
+                EvidenceArchive.EnsureSpace(existingArchiveRoot);
+                var attemptsRoot = Path.Combine(parsed.Directory, "attempts");
+                if (Directory.Exists(attemptsRoot))
+                    foreach (var keyPath in Directory.EnumerateDirectories(attemptsRoot))
+                    foreach (var attemptPath in Directory.EnumerateDirectories(keyPath))
+                        if (File.Exists(Path.Combine(attemptPath, "sha256.json")) && !File.Exists(Path.Combine(attemptPath, EvidenceArchive.ReceiptName)))
+                            EvidenceArchive.Archive(attemptPath, Path.Combine(existingArchiveRoot, campaignIdentity.CampaignId));
+            }
             await journal.ExecuteAsync(keys, async (key, attemptPath, number, ct) =>
             {
                 Console.WriteLine($"{key.Key}, attempt {number}/{maxAttempts}");
@@ -161,7 +171,17 @@ public static class CampaignCommands
                 var report = PreflightReportBuilder.Build(campaignIdentity, new[] { new BrokerPreflight(protocol, telemetry) });
                 CampaignJson.WriteNew(Path.Combine(attemptPath, "preflight.json"), report);
                 return observation!;
-            }, parsed.MaxRuns, cancellationToken, maxAttempts);
+            }, parsed.MaxRuns, cancellationToken, maxAttempts,
+                options.TryGetValue("archive-root", out var archiveRoot) && !string.IsNullOrWhiteSpace(archiveRoot)
+                    ? path => EvidenceArchive.Archive(path, Path.Combine(archiveRoot, campaignIdentity.CampaignId)) : null,
+                () =>
+                {
+                    if (options.TryGetValue("archive-root", out var store) && !string.IsNullOrWhiteSpace(store))
+                        EvidenceArchive.EnsureSpace(store);
+                    if (options.ContainsKey("archive-root") && OperatingSystem.IsWindows() &&
+                        new DriveInfo(Path.GetPathRoot(Environment.SystemDirectory)!).AvailableFreeSpace < 8L * 1024 * 1024 * 1024)
+                        throw new IOException("Controller disk has less than 8 GiB free; no new attempt will start.");
+                });
         }
         var expectedKeyCount = config.Expand().Length;
         Console.WriteLine($"Campaign invocation finished: {parsed.Directory}. Aggregate enforces full {expectedKeyCount}/{expectedKeyCount} coverage.");

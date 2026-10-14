@@ -29,3 +29,4 @@ Version.cpp
 # inputs reproduced from the committed lockfile, not sources: committing them would also break the
 # clean-tree provenance gate that a campaign requires.
 node_modules/
+__pycache__/

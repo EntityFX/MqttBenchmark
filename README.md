@@ -16,3 +16,5 @@
 Pilot не даёт полного набора для калибровки. Запуск требует чистых tracked исходников; примеры настройки и ручной CLI-эквивалент — в [локальном руководстве](docs/local-stand.md). Контейнерный config/broker-stand.v1.json не является native-инвентарём.
 
 [Переносимый пакет](DEPLOYMENT.md) · [Калибровка MqttY](../mqtty/doc/calibration-v3.md) · [Исторические результаты](../diss/doc/results-and-evidence.md).
+
+[Последовательная двухмашинная серия](docs/two-machine-campaign.md): отдельные Markdown/HTML-отчёты, независимый контроль и перенос каждой sealed attempt на evidence disk.

@@ -17,7 +17,12 @@ public static class CampaignJson
         stream.Flush(true);
     }
     public static string HashBytes(byte[] bytes) => Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
-    public static string HashFile(string path) => HashBytes(File.ReadAllBytes(path));
+    public static string HashFile(string path)
+    {
+        using var stream = File.OpenRead(path);
+        using var algorithm = SHA256.Create();
+        return Convert.ToHexString(algorithm.ComputeHash(stream)).ToLowerInvariant();
+    }
     /// <summary>
     /// Хэш-дерево артефактов каталога. Исключения: <c>.lock</c> (lease-файлы) и каталог
     /// <c>logs/</c> — живые stdout/stderr нативного брокера, открытые его процессом и

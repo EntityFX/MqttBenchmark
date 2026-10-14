@@ -92,10 +92,15 @@ public sealed class CampaignJournal : IDisposable
                 var sealPath = Path.Combine(attemptDirectory, "sha256.json");
                 // A crash before sealing consumes an attempt and preserves every byte for investigation.
                 if (!File.Exists(sealPath)) { rows.Add(start with { Status = "interrupted", Failure = "Attempt was not sealed." }); continue; }
-                var expected = CampaignJson.Read<Dictionary<string, string>>(sealPath);
-                var actual = CampaignJson.HashTree(attemptDirectory).Where(x => x.Key != "sha256.json").ToDictionary(x => x.Key, x => x.Value);
-                if (expected.Count != actual.Count || expected.Any(x => !actual.TryGetValue(x.Key, out var value) || value != x.Value))
-                    throw new InvalidDataException("Immutable attempt hash verification failed.");
+                if (File.Exists(Path.Combine(attemptDirectory, EvidenceArchive.ReceiptName)))
+                    EvidenceArchive.Validate(attemptDirectory);
+                else
+                {
+                    var expected = CampaignJson.Read<Dictionary<string, string>>(sealPath);
+                    var actual = CampaignJson.HashTree(attemptDirectory).Where(x => x.Key != "sha256.json").ToDictionary(x => x.Key, x => x.Value);
+                    if (expected.Count != actual.Count || expected.Any(x => !actual.TryGetValue(x.Key, out var value) || value != x.Value))
+                        throw new InvalidDataException("Immutable attempt hash verification failed.");
+                }
                 var result = CampaignJson.Read<AttemptResult>(resultPath);
                 if (result.Identity != start.Identity || result.Key != start.Key || result.Attempt != start.Attempt ||
                     result.Status is not ("success" or "failed") || (result.Status == "success" && result.Observation == null))
@@ -127,7 +132,8 @@ public sealed class CampaignJournal : IDisposable
     /// <exception cref="IOException">Каталог попытки уже существует (конфликт с историей).</exception>
     /// <exception cref="InvalidDataException">Наблюдение не прошло <see cref="ValidateObservation"/>.</exception>
     public async Task ExecuteAsync(IEnumerable<CampaignKey> keys, Func<CampaignKey, string, int, CancellationToken, Task<RunObservation>> execute,
-        int? maxRuns = null, CancellationToken cancellationToken = default, int maxAttempts = CampaignDefaults.MaxAttempts)
+        int? maxRuns = null, CancellationToken cancellationToken = default, int maxAttempts = CampaignDefaults.MaxAttempts,
+        Action<string>? afterSeal = null, Action? beforeAttempt = null)
     {
         var existing = ReadAttempts(root, maxAttempts).ToList();
         foreach (var exhausted in existing.GroupBy(x => x.Key).Where(x => x.Count() >= maxAttempts && x.All(a => a.Status != "success")))
@@ -140,6 +146,7 @@ public sealed class CampaignJournal : IDisposable
             while (true)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                beforeAttempt?.Invoke();
                 var number = existing.Count(x => x.Key == key) + 1;
                 if (number > maxAttempts) throw new CampaignExhaustedException(key.Key, maxAttempts);
                 var path = Path.Combine(root, "attempts", key.Key, $"attempt-{number:00}");
@@ -157,6 +164,8 @@ public sealed class CampaignJournal : IDisposable
                 catch (Exception error) { row = row with { Status = "failed", Failure = error.GetType().Name + ": " + error.Message }; }
                 CampaignJson.WriteNew(Path.Combine(path, "result.json"), row);
                 CampaignJson.WriteNew(Path.Combine(path, "sha256.json"), CampaignJson.HashTree(path));
+                // Archive failures stop the campaign and preserve its sealed local evidence.
+                afterSeal?.Invoke(path);
                 existing.Add(row);
                 if (row.Status == "success") { completed++; break; }
                 if (number == maxAttempts) throw new CampaignExhaustedException(key.Key, maxAttempts);

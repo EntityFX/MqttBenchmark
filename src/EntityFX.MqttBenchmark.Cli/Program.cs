@@ -137,7 +137,7 @@ internal static class Cli
     {
         Console.WriteLine("MqttBenchmark reproducible calibration pipeline");
         Console.WriteLine("  preflight --stand <broker-stand.v1.json> --config <benchmark-campaign.v3.json> --output <new-dir> [--broker <name>]");
-        Console.WriteLine("  matrix --stand <json> --config <v3-json> --campaign <directory> [--resume] [--broker <name>] [--max-runs <n>] [--max-attempts <n>] [--dry-run]");
+        Console.WriteLine("  matrix --stand <json> --config <v3-json> --campaign <directory> [--resume] [--broker <name>] [--max-runs <n>] [--max-attempts <n>] [--archive-root <external-directory>] [--dry-run]");
         Console.WriteLine("  aggregate --stand <json> --config <v3-json> --raw <campaign-dir> --output <new-dir>");
         Console.WriteLine("  v3 stand operations also accept --docker-executable <path>, --benchmark-repo <dir>, --stand-script <path>, --trusted-build-provenance <dir>.");
     }
