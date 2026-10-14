@@ -8,6 +8,11 @@
 Перед подготовкой нужны .NET 6, PowerShell 7, отдельный SSH-ключ и установленное
 окружение брокеров. На Linux инструменты лежат на evidence disk; проектные
 скрипты не устанавливают и не обновляют брокеры в ходе измерений.
+Инвентарь задаёт `linuxLaunchMode=systemdUser`: transient user service сохраняет
+брокер после закрытия SSH-сеанса, применяет CPU affinity до создания потоков и
+MemoryMax. Требуются пользовательский systemd/D-Bus и Python3 с dbus-python.
+Переменные окружения передаются в память manager через D-Bus, без env-файлов
+или значений в argv. Фактические ограничения проверяются в procfs/cgroup.
 `scripts/campaign/requirements.txt` задаёт зависимости генератора документов.
 
 ```powershell

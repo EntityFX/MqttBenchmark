@@ -54,6 +54,8 @@ public class RemoteNativeStandTests : IntegrationTestBase
                 ["cpuset"]="", ["memoryLimit"]=4294967296L
             });
         }
+        if (spec["linuxLaunchMode"] != null)
+            inventory["brokers"]![0]!["linuxLaunchMode"] = spec["linuxLaunchMode"]!.GetValue<string>();
         var path = Path.Combine(root, "inventory.json");
         File.WriteAllText(path, inventory.ToJsonString());
         return (path, Path.Combine(root, "stand"), root);

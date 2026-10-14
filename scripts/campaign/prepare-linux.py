@@ -42,6 +42,7 @@ for target in brokers.rglob('*'):
 snapshot['distributionSha256']=hashes
 (root/'environment-linux.json').write_text(json.dumps(snapshot,ensure_ascii=False,indent=2))
 for spec in specs:
+    spec['linuxLaunchMode']='systemdUser'
     name=spec['name'];sp=root/'inputs'/f'{name}-spec.json';sp.write_text(json.dumps({'brokers':[spec]},indent=2))
     subprocess.run([str(tools/'pwsh/pwsh'),'-NoProfile','-File',str(repo/'scripts/NewNativeStand.ps1'),'-BrokerSpecPath',str(sp),'-StandPath',str(root/'inputs'/f'{name}-stand.json'),'-CampaignPath',str(root/'inputs'/f'{name}-calibration.json'),'-CpuMode','singleCorePinned','-CpuSet','0','-Lifecycle','managed'],check=True)
 print('Isolated Linux broker inputs prepared on hd250.')

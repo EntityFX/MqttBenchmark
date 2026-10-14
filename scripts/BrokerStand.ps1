@@ -549,6 +549,15 @@ public static class MqbNativeAffinity {
     $launcherPath = Join-Path $logsDirectory 'launch-broker.sh'
     $nativeLauncherPid = $null
     $nativeLauncherIdentity = $null
+    $nativeSystemdUnit = $null
+    $systemdHelper = $null
+    $useSystemd = -not $external -and $IsLinux -and $Broker.Contains('linuxLaunchMode') -and $Broker.linuxLaunchMode -eq 'systemdUser'
+    if ($useSystemd) {
+        $systemdHelper = Resolve-StandPath '${MqttBenchmarkRoot}/scripts/LaunchNativeSystemd.py'
+        if (-not (Test-Path -LiteralPath $systemdHelper)) { throw 'Systemd native launcher helper is missing.' }
+        $nativeSystemdUnit = 'mqttbenchmark-' + [Guid]::NewGuid().ToString('N') + '.service'
+    }
+    try {
     if ($env:OS -eq 'Windows_NT') {
         $call = if ([IO.Path]::GetExtension($launchExecutable) -in @('.bat','.cmd')) { 'call ' } else { '' }
         [IO.File]::WriteAllText((Join-Path $logsDirectory 'launch-broker.cmd'),
@@ -573,7 +582,7 @@ public static class MqbNativeAffinity {
         # quotes each element correctly (unlike Start-Process -ArgumentList), so a working directory
         # or executable path containing spaces survives intact.
         $launcher = [Diagnostics.ProcessStartInfo]::new()
-        $launcher.FileName = if ($env:OS -eq 'Windows_NT') { Join-Path $env:SystemRoot 'System32\cmd.exe' } else { 'sh' }
+        $launcher.FileName = if ($useSystemd) { 'python3' } elseif ($env:OS -eq 'Windows_NT') { Join-Path $env:SystemRoot 'System32\cmd.exe' } else { 'sh' }
         $launcher.UseShellExecute = $false
         # Broker-specific environment is inherited by the shell and its process tree, without
         # writing secrets or shell assignments into the launcher. EMQX requires numeric DEBUG;
@@ -592,6 +601,9 @@ public static class MqbNativeAffinity {
             $launcher.ArgumentList.Add('/d')
             $launcher.ArgumentList.Add('/c')
             $launcher.ArgumentList.Add('launch-broker.cmd')
+        } elseif ($useSystemd) {
+            $launcher.ArgumentList.Add($systemdHelper)
+            $launcher.RedirectStandardInput = $true
         } else { $launcher.ArgumentList.Add($launcherFile) }
         if ($env:OS -eq 'Windows_NT') {
             # OpenSSH kills processes in its Windows job when a command finishes.
@@ -614,7 +626,16 @@ public static class MqbNativeAffinity {
                 $process.Dispose()
                 $process = $null
             }
-        } else { $process = [Diagnostics.Process]::Start($launcher) }
+        } else {
+            $process = [Diagnostics.Process]::Start($launcher)
+            if ($useSystemd) {
+                $payload = @{ unit=$nativeSystemdUnit; executable=$launchExecutable; args=@($resolvedArgs)
+                    workingDirectory=$workingDirectory; stdout=$stdoutLog; stderr=$stderrLog
+                    memoryLimit=[long]$Broker.memoryLimit; cpu=$(if ($inventory.cpuMode -eq 'singleCorePinned') { [int]$Broker.cpuset } else { $null }) }
+                $process.StandardInput.WriteLine((ConvertTo-Json $payload -Compress -Depth 10))
+                $process.StandardInput.Close()
+            }
+        }
         if ($process) {
             try {
                 if (-not $process.WaitForExit(30000)) { $process.Kill($true); throw 'Native launcher did not detach within 30 seconds.' }
@@ -659,7 +680,19 @@ public static class MqbNativeAffinity {
     # Best-effort memory limit: a Linux cgroup survives the controller exit (kernel state); Windows job objects
     # kill processes when the last handle closes, which is unsafe in a per-action controller - recorded honestly.
     $memoryEnforcement = 'not-enforced-native'
-    if (-not $external -and $IsLinux -and (Test-Path '/sys/fs/cgroup/cgroup.controllers')) {
+    if ($useSystemd) {
+        $groupPath = ((Get-Content -LiteralPath "/proc/$($process.Id)/cgroup" | Where-Object { $_.StartsWith('0::') }) -replace '^0::','')
+        $limitPath = '/sys/fs/cgroup' + $groupPath + '/memory.max'
+        if ((Test-Path -LiteralPath $limitPath) -and [IO.File]::ReadAllText($limitPath).Trim() -eq [string]$Broker.memoryLimit) {
+            $memoryEnforcement = 'systemd-user-cgroup-v2'
+        } else { $memoryEnforcement = 'systemd-user-memory-limit-unverified' }
+        if ($inventory.cpuMode -eq 'singleCorePinned') {
+            foreach ($task in Get-ChildItem -LiteralPath "/proc/$($process.Id)/task" -Directory) {
+                $allowed = (Get-Content -LiteralPath (Join-Path $task.FullName 'status') | Where-Object { $_.StartsWith('Cpus_allowed_list:') }) -replace '^Cpus_allowed_list:\s*',''
+                if ($allowed -ne [string]$Broker.cpuset) { throw 'A broker thread is outside the requested CPU affinity.' }
+            }
+        }
+    } elseif (-not $external -and $IsLinux -and (Test-Path '/sys/fs/cgroup/cgroup.controllers')) {
         try {
             $group = "/sys/fs/cgroup/mqttbenchmark-$($process.Id)"
             [void][IO.Directory]::CreateDirectory($group)
@@ -669,6 +702,7 @@ public static class MqbNativeAffinity {
         } catch { $memoryEnforcement = "cgroup-v2-unavailable: $($_.Exception.Message)" }
     }
     $inputPaths = @($ConfigPath, $PSCommandPath, $executable, $launchExecutable) + @($configs | ForEach-Object { $_.path }) | Sort-Object -Unique
+    if ($systemdHelper) { $inputPaths += $systemdHelper }
     $hashes = @($inputPaths | ForEach-Object { [ordered]@{ path = $_; sha256 = Get-Hash $_; scope = 'start-input' } })
     Write-JsonFile ([ordered]@{
         broker = $Broker.name; context = $context; runtime = 'native'
@@ -676,6 +710,7 @@ public static class MqbNativeAffinity {
         imageId = $actualSha; requestedImage = $executable
         launcherExecutable = $launchExecutable; launcherSha256 = Get-Hash $launchExecutable
         nativeLauncherPid = $nativeLauncherPid; nativeLauncherStartIdentity = $nativeLauncherIdentity
+        nativeSystemdUnit = $nativeSystemdUnit
         externallyManaged = $external
         processStartTimeUtc = $process.StartTime.ToUniversalTime().ToString('O')
         processStartIdentity = Get-NativeProcessIdentity $process
@@ -687,6 +722,13 @@ public static class MqbNativeAffinity {
         monotonicFrequency = [Diagnostics.Stopwatch]::Frequency
         startedAt = [DateTimeOffset]::UtcNow.ToString('O')
     }) (Join-Path $OutputDirectory 'run-provenance.json')
+    } catch {
+        $startError = $_
+        if ($useSystemd -and $nativeSystemdUnit) {
+            try { & systemctl --user stop $nativeSystemdUnit 2>$null | Out-Null } catch { }
+        }
+        throw $startError
+    }
 }
 function Get-NativeConnections([int]$Port) {
     $hex = ('{0:x4}' -f $Port)
@@ -803,6 +845,10 @@ function Stop-NativeBroker($Broker, [switch]$AllowAlreadyStopped) {
     }
     if ($run.Contains('nativeLauncherPid') -and $run.nativeLauncherPid) {
         Stop-NativeWindowsLauncher $run.nativeLauncherPid ([string]$run.nativeLauncherStartIdentity)
+    }
+    if ($run.Contains('nativeSystemdUnit') -and $run.nativeSystemdUnit) {
+        if ([string]$run.nativeSystemdUnit -notmatch '^mqttbenchmark-[a-f0-9]{32}\.service$') { throw 'Invalid owned systemd unit identity.' }
+        & systemctl --user stop ([string]$run.nativeSystemdUnit) 2>$null | Out-Null
     }
 }
 function Write-CaptureNative($Broker) {
