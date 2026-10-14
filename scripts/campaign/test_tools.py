@@ -1,8 +1,30 @@
 import json, pathlib, sys, tempfile, unittest
+from unittest import mock
 sys.path.insert(0,str(pathlib.Path(__file__).resolve().parent))
 from report import atomic_json, build, read
+from run import Campaign
 
 class Reports(unittest.TestCase):
+    def test_backup_failure_preserves_local_supervision_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            campaign=Campaign.__new__(Campaign);campaign.root=pathlib.Path(directory);campaign.storage=campaign.root/'offline'
+            campaign.state={'active':{'pid':123,'tag':'synthetic'}}
+            real_write=atomic_json
+            def write(path,data):
+                if pathlib.Path(path).parent==campaign.storage:raise OSError('disk disappeared')
+                real_write(path,data)
+            with mock.patch('run.atomic_json',side_effect=write):campaign.save()
+            self.assertEqual(123,read(campaign.root/'state.json')['active']['pid'])
+            self.assertIn('disk disappeared',campaign.state['backupError'])
+
+    def test_missing_mount_prevents_starting_any_cli(self):
+        campaign=Campaign.__new__(Campaign)
+        campaign.plan={'archiveMount':'/run/media/entityfx/hd250','archiveDevice':'/dev/sdc1'}
+        campaign.remote=lambda command:'/ /dev/sda2 ext4'
+        with mock.patch('run.subprocess.Popen') as process:
+            with self.assertRaisesRegex(RuntimeError,'mount identity'):campaign.invoke(['synthetic'],'test')
+            process.assert_not_called()
+
     def test_pending_report_is_honest_and_success_plot_values_come_from_observations(self):
         with tempfile.TemporaryDirectory() as directory:
             root=pathlib.Path(directory)
