@@ -2,8 +2,9 @@
 import argparse, datetime, json, pathlib, shutil, subprocess, sys
 sys.path.insert(0,str(pathlib.Path(__file__).resolve().parent))
 from report import atomic_json, BROKERS
-parser=argparse.ArgumentParser();parser.add_argument('--series',required=True);parser.add_argument('--identity-file',required=True)
+parser=argparse.ArgumentParser();parser.add_argument('--series',required=True);parser.add_argument('--identity-file',required=True);parser.add_argument('--cpu-threshold-percent',type=float,default=70)
 args=parser.parse_args();root=pathlib.Path(args.series).resolve();benchmark=pathlib.Path(__file__).resolve().parents[2];mqtty=benchmark.parent/'mqtty'
+if not 0<args.cpu_threshold_percent<=100:raise RuntimeError('CPU threshold must be in (0,100]')
 if (root/'series.json').exists():raise RuntimeError('Use a fresh series root; inputs are immutable')
 root.mkdir(parents=True,exist_ok=True);inputs=root/'inputs';inputs.mkdir()
 archive_linux='/run/media/entityfx/hd250/mqtty-evidence/'+root.name
@@ -23,6 +24,7 @@ for broker in BROKERS:
     stand['nativeHost']=native;stand['dockerContext']='native-ssh-192.168.5.1'
     atomic_json(inputs/f'{broker}-stand.json',stand)
     campaign=json.loads((archive_windows/'inputs'/f'{broker}-calibration.json').read_text())
+    campaign['cpuThresholdPercent']=args.cpu_threshold_percent
     atomic_json(inputs/f'{broker}-calibration.json',campaign)
     campaign['seed']=20260910;atomic_json(inputs/f'{broker}-validation.json',campaign)
     campaign.update(seed=20260908,messageBytes=[16],qos=[0,1,2],publishers=[128],repeats=1,warmupSeconds=1,measurementSeconds=3,cooldownSeconds=1)
@@ -35,6 +37,8 @@ plan={'schemaVersion':1,'seriesId':root.name,'createdAtUtc':datetime.datetime.no
       'archiveLinuxRoot':archive_linux,'archiveWindowsRoot':str(archive_windows),'archiveMount':'/run/media/entityfx/hd250','archiveDevice':'/dev/sdc1',
       'sshExecutable':ssh,'identityFile':identity,'sshTarget':target,'expectedRealRuns':576,'expectedFidelityRuns':576,'expectedRelayRuns':360,
       'brokerOrder':list(BROKERS),'diskPolicy':{'windowsBeforeRunGiB':10,'windowsAbortGiB':6,'hd250BeforeRunGiB':20,'hd250AbortGiB':12}}
+plan['cpuGuardPercent']=args.cpu_threshold_percent
+plan['rawControllerRoot']=str(pathlib.Path.home()/'.mqtty-scratch'/root.name/'raw')
 atomic_json(root/'series.json',plan)
 windows=json.loads(subprocess.check_output(['pwsh','-NoProfile','-Command',"@{os=(Get-CimInstance Win32_OperatingSystem | Select-Object Caption,Version,BuildNumber);cpu=(Get-CimInstance Win32_Processor | Select-Object Name,NumberOfCores,NumberOfLogicalProcessors);nic=(Get-NetAdapter | Select-Object Name,Status,LinkSpeed,HardwareInterface);runtime=(& dotnet --list-runtimes);powershell=$PSVersionTable.PSVersion.ToString()} | ConvertTo-Json -Depth 8"],encoding='utf-8-sig'))
 linux=json.loads((archive_windows/'environment-linux.json').read_text())

@@ -18,6 +18,8 @@ class Campaign:
     def __init__(self, root):
         self.root = pathlib.Path(root).resolve()
         self.plan = read(self.root / 'series.json')
+        self.raw=pathlib.Path(self.plan.get('rawControllerRoot',str(self.root/'raw')))
+        self.raw.mkdir(parents=True,exist_ok=True)
         self.storage = pathlib.Path(self.plan['archiveWindowsRoot'])
         self.storage.mkdir(parents=True, exist_ok=True)
         (self.storage / 'attempts').mkdir(exist_ok=True)
@@ -94,14 +96,14 @@ class Campaign:
                 shutil.copy2(self.root/name,self.storage/'controller-bundle'/name)
         # Only compact attempt descriptors are needed to resume; every large file
         # is in a verified ZIP on the disk. Unsealed evidence remains local.
-        for path in (self.root/'raw').glob('*/**/*.json'):
+        for path in self.raw.glob('*/**/*.json'):
             if path.name not in ('started.json','result.json','sha256.json','archive.json','campaign.json'): continue
-            target=self.storage/'controller-bundle'/path.relative_to(self.root)
+            target=self.storage/'controller-bundle'/'raw'/path.relative_to(self.raw)
             target.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(path,target)
 
     def real(self, broker, stage, pilot=False):
         cli = ['dotnet', self.plan['benchmarkCli']]
-        raw = self.root / 'raw' / f'{broker}-{stage}'
+        raw = self.raw / f'{broker}-{stage}'
         self.invoke(cli + ['preflight'] + self.common(broker, stage) + ['--output', self.root / 'preflight' / (broker + '-' + stage + '-' + uuid.uuid4().hex[:8])], broker + '-' + stage + '-preflight')
         options = cli + ['matrix'] + self.common(broker, stage) + ['--campaign', raw, '--archive-root', self.storage / 'attempts']
         if (raw / 'campaign.json').exists(): options += ['--resume']
@@ -118,7 +120,7 @@ class Campaign:
 
     def registry(self):
         receipts = []
-        for path in sorted((self.root / 'raw').glob('*/attempts/*/attempt-*/archive.json')):
+        for path in sorted(self.raw.glob('*/attempts/*/attempt-*/archive.json')):
             entry = read(path); entry['receipt'] = str(path)
             entry['linuxArchivePath'] = entry['archivePath'].replace(str(self.storage), self.plan['archiveLinuxRoot']).replace('\\', '/')
             receipts.append(entry)
@@ -126,7 +128,7 @@ class Campaign:
         shutil.copy2(self.root / 'archive-registry.json', self.storage / 'archive-registry.json')
 
     def verify_stage(self, broker, stage):
-        raw = self.root / 'raw' / f'{broker}-{stage}'
+        raw = self.raw / f'{broker}-{stage}'
         # Restore on hd250, never on a system volume. Read existing ZIPs and check
         # original seals; the CLI then repeats all journal/statistical validation.
         restored = self.storage / 'verification' / (broker + '-' + stage)

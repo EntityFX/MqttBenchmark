@@ -22,6 +22,13 @@ python scripts/campaign/run.py --series artifacts/two-machine-<same-id> --resume
 python scripts/campaign/run.py --series artifacts/two-machine-<same-id> --verify-only
 ```
 
+`prepare.py --cpu-threshold-percent 99` фиксирует явно выбранный пользователем
+порог CPU вместо стандартных70%. Это новая campaign identity; прежние попытки
+не смешиваются с ней. Насыщение генератора не объявляется пределом брокера.
+Raw scratch создаётся в `$USERPROFILE/.mqtty-scratch/<series>/raw`, вне workspace
+IDE, чтобы события записи подробных журналов не нагружали file watcher редактора.
+В каталоге reports остаются документы, а на hd250 — полные evidence ZIP.
+
 Подготовка storage выполняется отдельно: `configure-storage.py` создаёт отдельную
 учётную запись и ограниченный controller IP SMB share. Пароль читается из stdin;
 существующие учётные записи и службы сохраняются. На контроллере credential

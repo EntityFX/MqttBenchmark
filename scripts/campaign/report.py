@@ -89,7 +89,9 @@ def telemetry(attempt):
 
 def resource_rows(root, broker):
     rows = []
-    for campaign in (root / 'raw').glob(f'{broker}-*'):
+    plan=read(root/'series.json') if (root/'series.json').exists() else {}
+    raw=pathlib.Path(plan.get('rawControllerRoot',str(root/'raw')))
+    for campaign in raw.glob(f'{broker}-*'):
         for attempt in campaign.glob('attempts/*/attempt-*'):
             if not (attempt / 'result.json').exists():
                 continue
@@ -123,12 +125,14 @@ def build(root, broker, state):
     reports = root / 'reports'; assets = reports / 'assets'
     assets.mkdir(parents=True, exist_ok=True)
     title = broker if broker != 'ActiveMQ' else 'ActiveMQ Classic'
+    plan=read(root/'series.json') if (root/'series.json').exists() else {}
     document = [f'# {title}: измерения, двойник и MqttRelay',
                 f"Серия: `{root.name}`. Текущее состояние: **{state.get('status', 'подготовка')}**. Завершённый этап: `{state.get('stage', 'нет')}`.",
                 '## Установка и воспроизведение',
                 'Windows-контроллер 192.168.5.246 → физический Ethernet → Linux-стенд 192.168.5.1. Native managed lifecycle, singleHostSequential, singleCorePinned. Подробные данные архивируются на hd250 после завершения каждой попытки; передача архива не входит в измеряемое окно.',
                 '[Манифест серии](../series.json) · [Окружение](../environment.json) · [Реестр архивов](../archive-registry.json)',
                 'Продолжение: `python scripts/campaign/run.py --series <абсолютный каталог серии> --resume`. Проверка сохранённых ZIP и повторная агрегация: `python scripts/campaign/run.py --series <каталог> --verify-only`. Точные argv сохранены в журнале команд серии.']
+    document.append(f"CPU guard генератора: **{plan.get('cpuGuardPercent',70)}%** (максимальный пересекающий measurement интервал). При высоком CPU наблюдения характеризуют установку с Windows-генератором; насыщение контроллера не является доказательством предела брокера. Raw scratch вне workspace IDE: `{plan.get('rawControllerRoot',str(root/'raw'))}`; после каждой sealed attempt остаются только компактные descriptors.")
     if state.get('error'):
         document += ['## Диагностика', str(state['error'])]
     for stage in ('calibration', 'validation'):
