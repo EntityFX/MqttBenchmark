@@ -28,7 +28,13 @@ class Campaign:
 
     def save(self):
         atomic_json(self.root / 'state.json', self.state)
-        atomic_json(self.storage / 'state.json', self.state)
+        try:
+            atomic_json(self.storage / 'state.json', self.state)
+        except OSError as error:
+            # Never abandon supervision of a running CLI because its backup disk
+            # disappeared. The watchdog performs cancellation on the next poll.
+            self.state['backupError']=str(error)
+            atomic_json(self.root/'state.json',self.state)
 
     def remote(self, command):
         return subprocess.check_output(self.ssh + [command], text=True, encoding='utf-8', errors='replace').strip()
@@ -264,6 +270,8 @@ def main():
         else: campaign.execute()
     except Exception as error:
         campaign.state['status']='technical-failure'; campaign.state['error']=str(error); campaign.save()
+        try: campaign.registry()
+        except OSError: pass
         for broker, entry in campaign.state['brokers'].items():
             if entry['status']!='завершён': campaign.report(broker,entry['stage'],'техническая остановка',str(error))
         raise
