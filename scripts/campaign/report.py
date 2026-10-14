@@ -127,12 +127,12 @@ def build(root, broker, state):
     title = broker if broker != 'ActiveMQ' else 'ActiveMQ Classic'
     plan=read(root/'series.json') if (root/'series.json').exists() else {}
     document = [f'# {title}: измерения, двойник и MqttRelay',
-                f"Серия: `{root.name}`. Текущее состояние: **{state.get('status', 'подготовка')}**. Завершённый этап: `{state.get('stage', 'нет')}`.",
+                f"Серия: `{plan.get('seriesId',root.name)}`. Текущее состояние: **{state.get('status', 'подготовка')}**. Текущий этап: `{state.get('stage', 'нет')}`.",
                 '## Установка и воспроизведение',
-                'Windows-контроллер 192.168.5.246 → физический Ethernet → Linux-стенд 192.168.5.1. Native managed lifecycle, singleHostSequential, singleCorePinned. Подробные данные архивируются на hd250 после завершения каждой попытки; передача архива не входит в измеряемое окно.',
+                ('Linux 192.168.5.1 выполняет контроллер и брокеры; MQTT через 127.0.0.1. Контроллер использует CPU 1–11, 13–23, брокер закреплён за CPU 0 (SMT sibling 12 исключён из контроллера). CPU не объявляются эксклюзивными: фоновые процессы могут выполняться на них. Windows служит для SSH-управления и получения документов. Ёмкость Ethernet в MqttRelay — модельное допущение, не измерение loopback.' if plan.get('controllerMode')=='linuxLocal' else 'Windows-контроллер 192.168.5.246 → физический Ethernet → Linux-стенд 192.168.5.1.')+' Native managed lifecycle, singleHostSequential, singleCorePinned. Подробные данные архивируются на hd250 после завершения каждой попытки; передача архива не входит в измеряемое окно.',
                 '[Манифест серии](../series.json) · [Окружение](../environment.json) · [Реестр архивов](../archive-registry.json)',
                 'Продолжение: `python scripts/campaign/run.py --series <абсолютный каталог серии> --resume`. Проверка сохранённых ZIP и повторная агрегация: `python scripts/campaign/run.py --series <каталог> --verify-only`. Точные argv сохранены в журнале команд серии.']
-    document.append(f"CPU guard генератора: **{plan.get('cpuGuardPercent',70)}%** (максимальный пересекающий measurement интервал). При высоком CPU наблюдения характеризуют установку с Windows-генератором; насыщение контроллера не является доказательством предела брокера. Raw scratch вне workspace IDE: `{plan.get('rawControllerRoot',str(root/'raw'))}`; после каждой sealed attempt остаются только компактные descriptors.")
+    document.append(f"CPU guard генератора: **{plan.get('cpuGuardPercent',70)}%** (общесистемный CPU, максимальный пересекающий measurement интервал). Насыщение контроллера не является доказательством предела брокера. При совместном запуске CPU/RAM/дисковый I/O общие для контроллера и брокера. Raw scratch: `{plan.get('rawControllerRoot',str(root/'raw'))}`; после каждой sealed attempt остаются только компактные descriptors.")
     if state.get('error'):
         document += ['## Диагностика', str(state['error'])]
     for stage in ('calibration', 'validation'):

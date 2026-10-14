@@ -5,7 +5,7 @@ def capture(args):
     result=subprocess.run(args,text=True,capture_output=True)
     return {'argv':args,'exitCode':result.returncode,'stdout':result.stdout,'stderr':result.stderr}
 
-parser=argparse.ArgumentParser();parser.add_argument('--series',required=True);parser.add_argument('--repository',required=True)
+parser=argparse.ArgumentParser();parser.add_argument('--series',required=True);parser.add_argument('--repository',required=True);parser.add_argument('--loopback',action='store_true')
 args=parser.parse_args();root=pathlib.Path(args.series).resolve();repo=pathlib.Path(args.repository).resolve()
 mount=pathlib.Path('/run/media/entityfx/hd250')
 if not root.is_relative_to(mount/'mqtty-evidence') or subprocess.check_output(['findmnt','-n','-o','TARGET','-T',str(root.parent)],text=True).strip()!=str(mount):
@@ -22,6 +22,8 @@ if 'persistent="false"' not in text:raise RuntimeError('ActiveMQ must have persi
 emqx=brokers/'emqx';conf=emqx/'etc/emqx.conf';conf.write_text(conf.read_text().replace('127.0.0.1:4883','192.168.5.1:4883'))
 (emqx/'data').mkdir(exist_ok=True)
 mosq=brokers/'mosquitto.conf';mosq.write_text('listener 2883 192.168.5.1\nallow_anonymous true\npersistence false\nlog_dest none\nsys_interval 2\n')
+if args.loopback:
+    for config in (xml,conf,mosq):config.write_text(config.read_text().replace('192.168.5.1','127.0.0.1'))
 java=pathlib.Path('/usr/bin/java').resolve();beam=next(emqx.glob('erts-*/bin/beam.smp'))
 specs=[
  {'name':'Aedes','mqttUri':'mqtt://192.168.5.1:1883','executable':'/usr/bin/node','args':[str(brokers/'aedes/server.js'),'1883'],'configFiles':[str(brokers/'aedes/server.js'),str(brokers/'aedes/package-lock.json')],'versionArgs':['--version'],'brokerVersion':'1.1.2'},
@@ -29,9 +31,14 @@ specs=[
  {'name':'ActiveMQ','mqttUri':'mqtt://192.168.5.1:3883','executable':str(java),'launcherExecutable':str(classic/'bin/activemq'),'args':['console'],'workingDirectory':str(classic),'configFiles':[str(xml),str(classic/'bin/env')],'versionArgs':['-version'],'brokerVersion':'6.3.2','environment':{'JAVA_HOME':str(java.parent.parent)}},
  {'name':'EMQX','mqttUri':'mqtt://192.168.5.1:4883','executable':str(beam),'launcherExecutable':str(emqx/'bin/emqx'),'args':['foreground'],'workingDirectory':str(emqx),'configFiles':[str(conf),str(emqx/'etc/base.hocon'),str(emqx/'etc/vm.args')],'versionArgs':[],'brokerVersion':'6.3.0','startTimeoutSeconds':60,'environment':{'DEBUG':'0'}}]
 if not (classic/'bin/env').exists():specs[2]['configFiles'].remove(str(classic/'bin/env'))
+if args.loopback:
+    for spec in specs:spec['mqttUri']=spec['mqttUri'].replace('192.168.5.1','127.0.0.1')
 snapshot={'role':'Linux broker host','captures':[capture(command) for command in
  [['uname','-a'],['cat','/etc/os-release'],['lscpu'],['free','-h'],['df','-h'],['ip','-4','address'],['ip','route'],['timedatectl','status'],['ps','-eo','pid,comm,pcpu,pmem'],['node','--version'],[str(java),'-version'],['/usr/sbin/mosquitto','-h'],[str(tools/'pwsh/pwsh'),'-NoProfile','-Command','$PSVersionTable.PSVersion.ToString()']]],
  'governor':pathlib.Path('/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor').read_text().strip(),
+ 'boostControls':{str(path):path.read_text().strip() if path.exists() else None for path in [pathlib.Path('/sys/devices/system/cpu/cpufreq/boost'),pathlib.Path('/sys/devices/system/cpu/intel_pstate/no_turbo')]},
+ 'boostNote':'Absent sysfs controls do not establish boost enabled/disabled; CPU frequency/boost was not changed',
+ 'nicMtu':int(pathlib.Path('/sys/class/net/enp6s0/mtu').read_text()),
  'smtSiblings':pathlib.Path('/sys/devices/system/cpu/cpu0/topology/thread_siblings_list').read_text().strip(),
  'nicMbps':int(pathlib.Path('/sys/class/net/enp6s0/speed').read_text()),'mount':capture(['findmnt','-T',str(root)])}
 if snapshot['nicMbps']!=1000:raise RuntimeError('Transport defaults require observed 1 Gbit/s data link')

@@ -512,6 +512,13 @@ function Start-NativeBroker($Broker) {
     $affinityMask = if ($inventory.cpuMode -eq 'singleCorePinned') { [long](1L -shl [int]$Broker.cpuset) } else { $null }
     if (-not $external -and $null -ne $affinityMask) {
         $availableMask=(Get-Process -Id $PID).ProcessorAffinity.ToInt64()
+        if ($IsLinux -and $Broker.Contains('linuxLaunchMode') -and $Broker.linuxLaunchMode -eq 'systemdUser') {
+            # The user manager creates this process independently of the controller.
+            # Its available mask permits a controller partition that excludes broker CPU.
+            $managerPidText = & systemctl show "user@$(& id -u).service" --property=MainPID --value
+            if ($LASTEXITCODE -ne 0 -or [int]$managerPidText -le 0) { throw 'Could not resolve the systemd user manager PID.' }
+            $availableMask=(Get-Process -Id ([int]$managerPidText)).ProcessorAffinity.ToInt64()
+        }
         if ($IsWindows) {
             # WMI creates the broker independently of the controller's CPU partition.
             # Use the system mask; the controller may intentionally run on another CPU.

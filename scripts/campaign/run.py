@@ -20,11 +20,26 @@ class Campaign:
         self.plan = read(self.root / 'series.json')
         self.raw=pathlib.Path(self.plan.get('rawControllerRoot',str(self.root/'raw')))
         self.raw.mkdir(parents=True,exist_ok=True)
-        self.storage = pathlib.Path(self.plan['archiveWindowsRoot'])
+        self.storage = pathlib.Path(self.plan.get('archiveStorageRoot',self.plan.get('archiveWindowsRoot','')))
+        if not str(self.storage) or self.storage.resolve().is_relative_to(self.root):
+            raise RuntimeError('Evidence storage must be a separate directory outside the controller bundle')
         self.storage.mkdir(parents=True, exist_ok=True)
         (self.storage / 'attempts').mkdir(exist_ok=True)
         self.state = read(self.root / 'state.json') if (self.root / 'state.json').exists() else {'completed': [], 'brokers': {}}
-        self.ssh = [self.plan['sshExecutable'], '-i', self.plan['identityFile'], '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', self.plan['sshTarget']]
+        self.ssh = None if self.plan.get('controllerMode')=='linuxLocal' else [self.plan['sshExecutable'], '-i', self.plan['identityFile'], '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', self.plan['sshTarget']]
+        if self.plan.get('controllerMode')=='linuxLocal':
+            expected=set()
+            for part in self.plan['controllerCpuSet'].split(','):
+                ends=part.split('-');expected.update(range(int(ends[0]),int(ends[-1])+1))
+            observed=set(os.sched_getaffinity(0))
+            if observed!=expected:raise RuntimeError('Controller affinity does not match frozen Linux CPU partition')
+            cgroup=next(line.split(':',2)[2] for line in pathlib.Path('/proc/self/cgroup').read_text().splitlines() if line.startswith('0::'))
+            limit=pathlib.Path('/sys/fs/cgroup'+cgroup)/'memory.max'
+            if limit.read_text().strip()!=str(self.plan['controllerMemoryMaxBytes']):raise RuntimeError('Controller memory limit does not match frozen plan')
+            self.state['controllerRuntime']={'pid':os.getpid(),'affinity':sorted(observed),'cgroup':cgroup,'memoryMaxBytes':self.plan['controllerMemoryMaxBytes']}
+
+    def system_disk(self):
+        return pathlib.Path(self.plan.get('systemDiskRoot',self.root))
 
     def save(self):
         atomic_json(self.root / 'state.json', self.state)
@@ -37,6 +52,8 @@ class Campaign:
             atomic_json(self.root/'state.json',self.state)
 
     def remote(self, command):
+        if self.ssh is None:
+            return subprocess.check_output(['sh','-c',command],text=True,encoding='utf-8',errors='replace').strip()
         return subprocess.check_output(self.ssh + [command], text=True, encoding='utf-8', errors='replace').strip()
 
     def storage_check(self):
@@ -46,8 +63,8 @@ class Campaign:
             raise RuntimeError('hd250 mount identity changed or disk is unavailable; no new workload will start')
         if shutil.disk_usage(self.storage).free < 20*GIB:
             raise RuntimeError('hd250 has less than 20 GiB free')
-        if shutil.disk_usage(self.root).free < 10*GIB:
-            raise RuntimeError('Windows system disk has less than 10 GiB free')
+        if shutil.disk_usage(self.system_disk()).free < 10*GIB:
+            raise RuntimeError('Controller system disk has less than 10 GiB free')
 
     def invoke(self, args, tag, cwd=None, allow_fidelity_failure=False):
         self.storage_check()
@@ -63,7 +80,7 @@ class Campaign:
             while process.poll() is None:
                 time.sleep(2)
                 try:
-                    if shutil.disk_usage(self.root).free < 6*GIB or shutil.disk_usage(self.storage).free < 12*GIB:
+                    if shutil.disk_usage(self.system_disk()).free < 6*GIB or shutil.disk_usage(self.storage).free < 12*GIB:
                         stopped = 'Low free disk space; workload interrupted before disks fill'
                 except OSError:
                     stopped = 'Evidence disk became inaccessible'
@@ -112,6 +129,8 @@ class Campaign:
         raw = self.raw / f'{broker}-{stage}'
         self.invoke(cli + ['preflight'] + self.common(broker, stage) + ['--output', self.root / 'preflight' / (broker + '-' + stage + '-' + uuid.uuid4().hex[:8])], broker + '-' + stage + '-preflight')
         options = cli + ['matrix'] + self.common(broker, stage) + ['--campaign', raw, '--archive-root', self.storage / 'attempts']
+        if self.plan.get('controllerMode')=='linuxLocal':
+            options += ['--archive-mount',self.plan['archiveMount'],'--archive-device',self.plan['archiveDevice']]
         if (raw / 'campaign.json').exists(): options += ['--resume']
         self.invoke(options, broker + '-' + stage + '-matrix')
         self.registry()
@@ -231,7 +250,7 @@ class Campaign:
 
     def freeze_transport(self, broker):
         path = self.root / 'transport.json'
-        transport = read(path) if path.exists() else {'network': {'capacityBytesPerSecond':125000000, 'throughputWindowTicks':100, 'queueCapacity':100000, 'networkType':'ethernet'}, 'transferTicksByBroker':{}, 'method':'nearest integer one-way propagation ticks from half mean calibration MQTT echo RTT; tick=0.1ms; includes echo broker overhead; no control-data tuning'}
+        transport = read(path) if path.exists() else {'network': {'capacityBytesPerSecond':125000000, 'throughputWindowTicks':100, 'queueCapacity':100000, 'networkType':'ethernet'}, 'transferTicksByBroker':{}, 'method':'nearest integer one-way propagation ticks from half mean calibration MQTT echo RTT; tick=0.1ms; includes echo broker overhead; no control-data tuning', 'capacityProvenance':'explicit model assumption: 1 Gbit/s Ethernet; loopback capacity was not measured' if self.plan.get('controllerMode')=='linuxLocal' else 'observed physical NIC link: 1 Gbit/s', 'queueProvenance':'explicit assumption: 100000 queued packets'}
         if broker not in transport['transferTicksByBroker']:
             points = read(self.root / 'brokers' / broker / 'calibration/broker-observations.v3.json')['points']
             rtt = sum(p['rttBaselineMs'] for p in points)/len(points)
@@ -259,11 +278,20 @@ class Campaign:
         shutil.copytree(self.root, self.storage / 'controller-bundle', dirs_exist_ok=True, ignore=shutil.ignore_patterns('raw'))
 
 def main():
-    parser=argparse.ArgumentParser(); parser.add_argument('--series',required=True); parser.add_argument('--resume',action='store_true'); parser.add_argument('--verify-only',action='store_true')
+    parser=argparse.ArgumentParser(); parser.add_argument('--series',required=True); parser.add_argument('--resume',action='store_true'); parser.add_argument('--verify-only',action='store_true'); parser.add_argument('--preflight-only',action='store_true'); parser.add_argument('--pilot-only',action='store_true')
     args=parser.parse_args(); campaign=Campaign(args.series)
     if not args.resume and campaign.state['completed'] and not args.verify_only: raise RuntimeError('Use --resume for existing campaign')
     try:
-        if args.verify_only:
+        if args.preflight_only:
+            for broker in BROKERS:
+                campaign.invoke(['dotnet',campaign.plan['benchmarkCli'],'preflight']+campaign.common(broker,'pilot')+['--output',campaign.root/'preflight'/(broker+'-preparation-'+uuid.uuid4().hex[:8])],broker+'-preparation-preflight')
+            campaign.state['status']='preflight-completed';campaign.save()
+        elif args.pilot_only:
+            for broker in BROKERS:
+                campaign.once(broker+'/pilot',lambda b=broker:campaign.real(b,'pilot',pilot=True))
+                campaign.report(broker,'pilot','пилот пройден')
+            campaign.state['status']='pilots-completed';campaign.save()
+        elif args.verify_only:
             for broker in BROKERS:
                 for stage in ('calibration','validation'):
                     if (campaign.root/'brokers'/broker/stage/'broker-observations.v3.json').exists(): campaign.verify_stage(broker,stage)

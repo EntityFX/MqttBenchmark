@@ -38,6 +38,46 @@ public class EvidenceArchiveTests
     }
 
     [TestMethod]
+    public void StorageDisappearingAfterArchiveValidation_PreservesRaw()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        try
+        {
+            var attempt = SealedAttempt(root);
+            var probes = 0;
+            Assert.ThrowsException<IOException>(() => EvidenceArchive.Archive(attempt, Path.Combine(root, "disk"), () =>
+            {
+                if (++probes == 2) throw new IOException("synthetic mount disappearance");
+            }));
+            Assert.IsTrue(File.Exists(Path.Combine(attempt, "publishes.ndjson")));
+            EvidenceArchive.Validate(attempt);
+            // Resumption can reclaim raw after the same storage comes back.
+            EvidenceArchive.Archive(attempt, Path.Combine(root, "disk"));
+            Assert.IsFalse(File.Exists(Path.Combine(attempt, "publishes.ndjson")));
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    [TestMethod]
+    public void PublishedZipWithoutReceipt_IsRecoveredWithoutOverwriting()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        try
+        {
+            var attempt = SealedAttempt(root);
+            EvidenceArchive.Archive(attempt, Path.Combine(root, "disk"));
+            var receipt = CampaignJson.Read<ArchivedAttempt>(Path.Combine(attempt, EvidenceArchive.ReceiptName));
+            using (var archive = System.IO.Compression.ZipFile.OpenRead(receipt.ArchivePath))
+                File.WriteAllText(Path.Combine(attempt, "publishes.ndjson"), new StreamReader(archive.GetEntry("publishes.ndjson")!.Open()).ReadToEnd());
+            File.Delete(Path.Combine(attempt, EvidenceArchive.ReceiptName));
+            EvidenceArchive.Archive(attempt, Path.Combine(root, "disk"));
+            Assert.AreEqual(receipt, CampaignJson.Read<ArchivedAttempt>(Path.Combine(attempt, EvidenceArchive.ReceiptName)));
+            Assert.IsFalse(File.Exists(Path.Combine(attempt, "publishes.ndjson")));
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    [TestMethod]
     public void FailedTransferOrBadSeal_NeverRemovesOriginalEvidence()
     {
         var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));

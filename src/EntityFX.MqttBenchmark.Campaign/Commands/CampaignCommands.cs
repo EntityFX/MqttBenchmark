@@ -127,6 +127,15 @@ public static class CampaignCommands
 
         // CLI --max-attempts overrides the campaign configuration value.
         var maxAttempts = parsed.MaxAttempts ?? config.MaxAttempts;
+        Action? verifyArchiveStorage = null;
+        if (options.TryGetValue("archive-mount", out var archiveMount))
+        {
+            if (!options.TryGetValue("archive-device", out var archiveDevice) || string.IsNullOrWhiteSpace(archiveMount) || string.IsNullOrWhiteSpace(archiveDevice) ||
+                !options.TryGetValue("archive-root", out var checkedRoot) || string.IsNullOrWhiteSpace(checkedRoot))
+                throw new ArgumentException("--archive-mount requires --archive-device and --archive-root.");
+            verifyArchiveStorage = () => EvidenceArchive.EnsureLinuxMount(checkedRoot, archiveMount, archiveDevice);
+            verifyArchiveStorage();
+        }
         using (var journal = CampaignJournal.Open(parsed.Directory, campaignIdentity, options.ContainsKey("resume")))
         {
             if (options.TryGetValue("archive-root", out var existingArchiveRoot) && !string.IsNullOrWhiteSpace(existingArchiveRoot))
@@ -137,7 +146,7 @@ public static class CampaignCommands
                     foreach (var keyPath in Directory.EnumerateDirectories(attemptsRoot))
                     foreach (var attemptPath in Directory.EnumerateDirectories(keyPath))
                         if (File.Exists(Path.Combine(attemptPath, "sha256.json")) && !File.Exists(Path.Combine(attemptPath, EvidenceArchive.ReceiptName)))
-                            EvidenceArchive.Archive(attemptPath, Path.Combine(existingArchiveRoot, campaignIdentity.CampaignId));
+                            EvidenceArchive.Archive(attemptPath, Path.Combine(existingArchiveRoot, campaignIdentity.CampaignId), verifyArchiveStorage);
             }
             await journal.ExecuteAsync(keys, async (key, attemptPath, number, ct) =>
             {
@@ -173,9 +182,10 @@ public static class CampaignCommands
                 return observation!;
             }, parsed.MaxRuns, cancellationToken, maxAttempts,
                 options.TryGetValue("archive-root", out var archiveRoot) && !string.IsNullOrWhiteSpace(archiveRoot)
-                    ? path => EvidenceArchive.Archive(path, Path.Combine(archiveRoot, campaignIdentity.CampaignId)) : null,
+                    ? path => EvidenceArchive.Archive(path, Path.Combine(archiveRoot, campaignIdentity.CampaignId), verifyArchiveStorage) : null,
                 () =>
                 {
+                    verifyArchiveStorage?.Invoke();
                     if (options.TryGetValue("archive-root", out var store) && !string.IsNullOrWhiteSpace(store))
                         EvidenceArchive.EnsureSpace(store);
                     if (options.ContainsKey("archive-root") && OperatingSystem.IsWindows() &&

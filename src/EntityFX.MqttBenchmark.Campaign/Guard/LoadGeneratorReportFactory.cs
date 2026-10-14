@@ -15,6 +15,6 @@ public static class LoadGeneratorReportFactory
             1, maximumIntervalSeconds,
             "max-overlapping-interval; no prorating; network=(rx+tx)/link-speed; " +
                 (networkThresholdPercent.HasValue ? "network threshold enforced" : "network informational"),
-            "Windows GetSystemTimes (kernel includes idle)",
-            "OS-routed NetworkInterface cumulative byte counters", assessment);
+            OperatingSystem.IsWindows() ? "Windows GetSystemTimes (kernel includes idle)" : "Linux /proc/stat aggregated CPU (kernel contract includes idle)",
+            network?.LinkSpeedBitsPerSecond == 0 ? "Same-host loopback: network counters not collected; no physical capacity gate" : "OS-routed NetworkInterface cumulative byte counters", assessment);
 }

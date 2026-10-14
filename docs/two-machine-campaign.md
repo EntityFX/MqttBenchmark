@@ -29,6 +29,36 @@ Raw scratch создаётся в `$USERPROFILE/.mqtty-scratch/<series>/raw`, в
 IDE, чтобы события записи подробных журналов не нагружали file watcher редактора.
 В каталоге reports остаются документы, а на hd250 — полные evidence ZIP.
 
+## Резервный совместный запуск на Linux
+
+Если Windows-контроллер не проходит guard, пользователь разрешил отдельную
+Linux-серию. `prepare-linux-controller.py --series <hd250/new-series>
+--repository <MqttBenchmark> --mqtty-repository <mqtty>
+--fallback-evidence <previous-series>` создаёт независимые frozen входы:
+MQTT через127.0.0.1, CPU guard99%, network guard informational. Pilot использует
+полное окно5/30/5с, чтобы короткая нагрузка не скрывала перегрузку.
+
+Контроллер запускается в owned systemd user service с CPU1–11,13–23 и
+MemoryMax8GiB. Брокеры используют CPU0/MemoryMax4GiB; SMT sibling12 исключён
+из контроллера. Фоновые процессы не перемещаются, эксклюзивность не заявляется.
+Systemd native launch проверяет доступную affinity менеджера, затем фактическую
+affinity всех потоков брокера. CPU guard относится ко всему Linux-хосту.
+
+Controller bundle, raw, evidence, TMPDIR, Python venv/cache и simulator bundles
+лежат на hd250 в отдельных каталогах. System disk проверяется отдельно от raw.
+`matrix --archive-mount /run/media/entityfx/hd250 --archive-device /dev/sdc1`
+проверяет TARGET/SOURCE/ext4 перед архивированием, перед каждой попыткой и
+непосредственно перед очисткой. При повреждении/потере mount raw сохраняется;
+resume восстанавливает receipt уже опубликованного проверенного ZIP и завершает
+безопасную очистку после восстановления storage.
+
+Для Linux loopback нельзя вывести ёмкость физического линка из натурных данных.
+125000000 bytes/s в модели сети — явно указанное допущение Ethernet1Gbps;
+RTT берётся из новой Linux-калибровки, queueCapacity100000 — допущение.
+Профили и измерения двух машин не смешиваются с новой серией.
+`watch-linux.py --source <SMB/new-series/controller> --destination <local-artifacts>`
+копирует компактные документы на Windows каждые30с; native runner от SSH не зависит.
+
 Подготовка storage выполняется отдельно: `configure-storage.py` создаёт отдельную
 учётную запись и ограниченный controller IP SMB share. Пароль читается из stdin;
 существующие учётные записи и службы сохраняются. На контроллере credential

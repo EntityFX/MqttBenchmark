@@ -1,6 +1,7 @@
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Runtime.InteropServices;
+using System.Diagnostics;
 
 namespace EntityFX.MqttBenchmark.Campaign;
 
@@ -27,12 +28,25 @@ public static class EvidenceArchive
             throw new IOException("Evidence disk has less than 20 GiB free.");
     }
 
-    public static void Archive(string attemptDirectory, string archiveRoot)
+    public static void EnsureLinuxMount(string archiveRoot, string mount, string device)
     {
+        if (!OperatingSystem.IsLinux()) throw new PlatformNotSupportedException("Explicit mount verification requires Linux.");
+        var info = new ProcessStartInfo("findmnt") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
+        foreach (var value in new[] { "-n", "-o", "TARGET,SOURCE,FSTYPE", "-T", archiveRoot }) info.ArgumentList.Add(value);
+        using var process = Process.Start(info) ?? throw new IOException("Could not check evidence mount.");
+        var output = process.StandardOutput.ReadToEnd().Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        process.WaitForExit();
+        if (process.ExitCode != 0 || !output.SequenceEqual(new[] { mount, device, "ext4" }))
+            throw new IOException("Evidence mount identity changed; archive and cleanup forbidden.");
+    }
+
+    public static void Archive(string attemptDirectory, string archiveRoot, Action? verifyStorage = null)
+    {
+        verifyStorage?.Invoke();
         var source = Path.GetFullPath(attemptDirectory);
         foreach (var entry in Directory.EnumerateFileSystemEntries(source, "*", SearchOption.AllDirectories))
             if ((File.GetAttributes(entry) & FileAttributes.ReparsePoint) != 0) throw new IOException("Evidence archive refuses links.");
-        if (File.Exists(Path.Combine(source, ReceiptName))) { Validate(source); return; }
+        if (File.Exists(Path.Combine(source, ReceiptName))) { Validate(source); verifyStorage?.Invoke(); Cleanup(source); return; }
         if (!File.Exists(Path.Combine(source, "sha256.json"))) throw new IOException("Only sealed attempts can be archived.");
         var key = Path.GetFileName(Path.GetDirectoryName(source));
         var destinationRoot = Path.GetFullPath(archiveRoot);
@@ -40,6 +54,14 @@ public static class EvidenceArchive
             throw new IOException("Archive storage must be outside the attempt directory.");
         var destination = Path.Combine(destinationRoot, key!, Path.GetFileName(source) + ".zip");
         Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+        // Recover a crash between publishing the validated ZIP and writing its receipt.
+        if (File.Exists(destination))
+        {
+            var recovered = new ArchivedAttempt(Path.GetFullPath(destination), CampaignJson.HashFile(destination));
+            ValidateArchive(source, destination, recovered.Sha256);
+            CampaignJson.WriteNew(Path.Combine(source, ReceiptName), recovered);
+            verifyStorage?.Invoke(); Cleanup(source); return;
+        }
         // A previous interrupted transfer is retained under a distinct name; never overwrite it.
         var staging = destination + ".partial-" + Guid.NewGuid().ToString("N");
         using (var output = new FileStream(staging, FileMode.CreateNew, FileAccess.Write, FileShare.None))
@@ -57,6 +79,13 @@ public static class EvidenceArchive
         ValidateArchive(source, staging, receipt.Sha256);
         File.Move(staging, destination, overwrite: false);
         CampaignJson.WriteNew(Path.Combine(source, ReceiptName), receipt);
+        // A disconnect/unmount after verification must not authorize cleanup.
+        verifyStorage?.Invoke();
+        Cleanup(source);
+    }
+
+    private static void Cleanup(string source)
+    {
         // Resolve every final deletion target before touching it. Do not follow directory links.
         var files = Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories).ToArray();
         foreach (var file in files)

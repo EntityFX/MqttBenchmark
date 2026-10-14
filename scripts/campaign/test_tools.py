@@ -1,10 +1,30 @@
 import json, pathlib, sys, tempfile, unittest
+from types import SimpleNamespace
 from unittest import mock
 sys.path.insert(0,str(pathlib.Path(__file__).resolve().parent))
 from report import atomic_json, build, read
 from run import Campaign
 
 class Reports(unittest.TestCase):
+    def test_linux_report_identifies_shared_host_and_capacity_assumption(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=pathlib.Path(directory)
+            atomic_json(root/'series.json',{'controllerMode':'linuxLocal','seriesId':'linux-series','cpuGuardPercent':99})
+            build(root,'Aedes',{'status':'не начат','stage':'pending'})
+            text=(root/'reports/Aedes.md').read_text(encoding='utf-8')
+            self.assertIn('linux-series',text)
+            self.assertIn('MQTT через 127.0.0.1',text)
+            self.assertIn('не измерение loopback',text)
+            self.assertNotIn('Windows-контроллер 192.168.5.246 →',text)
+
+    def test_linux_guard_checks_system_partition_separately_from_external_raw(self):
+        campaign=Campaign.__new__(Campaign);campaign.root=pathlib.Path('/external/controller');campaign.storage=pathlib.Path('/external/evidence')
+        campaign.plan={'archiveMount':'/external','archiveDevice':'/dev/sdc1','systemDiskRoot':'/'}
+        campaign.remote=lambda command:'/external /dev/sdc1 ext4'
+        usage=lambda path:SimpleNamespace(free=(5 if pathlib.Path(path)==pathlib.Path('/') else 100)*1024**3)
+        with mock.patch('run.shutil.disk_usage',side_effect=usage):
+            with self.assertRaisesRegex(RuntimeError,'system disk'):campaign.storage_check()
+
     def test_backup_failure_preserves_local_supervision_state(self):
         with tempfile.TemporaryDirectory() as directory:
             campaign=Campaign.__new__(Campaign);campaign.root=pathlib.Path(directory);campaign.storage=campaign.root/'offline'
