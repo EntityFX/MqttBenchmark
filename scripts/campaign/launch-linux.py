@@ -16,6 +16,7 @@ os.environ.update(TMPDIR=str(temporary),TMP=str(temporary),TEMP=str(temporary),
                   MPLCONFIGDIR=str(base/'matplotlib-cache'),DOTNET_CLI_HOME=str(base/'dotnet-home'),
                   DOTNET_CLI_TELEMETRY_OPTOUT='1',DOTNET_NOLOGO='1',
                   MQB_STAND_SHELL=str(pathlib.Path(plan['archiveMount'])/'mqtty-evidence/tools/pwsh/pwsh'))
+os.environ['MQB_GUARD_SAMPLER_CLI']=plan['benchmarkCli']
 unit='mqttbenchmark-controller-'+uuid.uuid4().hex+'.service'
 argv=[str(pathlib.Path(__file__).with_name('run.py')),'--series',str(root),'--resume']
 flag={'preflight':'--preflight-only','pilot':'--pilot-only','verify':'--verify-only'}.get(args.mode)

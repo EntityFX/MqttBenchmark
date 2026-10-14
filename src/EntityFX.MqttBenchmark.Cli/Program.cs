@@ -17,6 +17,8 @@ internal static class Cli
         try
         {
             var options = Parse(args.Skip(1).ToArray());
+            if (args[0] == "sample-guard")
+                return ExternalGuardSampler.Run(new Uri(Required(options,"endpoint")),Required(options,"output"),int.Parse(Required(options,"parent")));
             if (args[0] == "monitor")
             {
                 using var cancellation = new CancellationTokenSource();

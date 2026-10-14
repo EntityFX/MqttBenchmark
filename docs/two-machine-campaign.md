@@ -43,6 +43,11 @@ MemoryMax8GiB. Брокеры используют CPU0/MemoryMax4GiB; SMT sibli
 из контроллера. Фоновые процессы не перемещаются, эксклюзивность не заявляется.
 Systemd native launch проверяет доступную affinity менеджера, затем фактическую
 affinity всех потоков брокера. CPU guard относится ко всему Linux-хосту.
+`MQB_GUARD_SAMPLER_CLI` запускает счётчики в отдельном лёгком .NET-процессе:
+выделенный поток внутри генератора также приостанавливается при GC генератора.
+Sampler использует тот же OS monotonic clock; frequency, PID, CLI hash и raw
+интервалы сохраняются. Оценка CPU99%, max interval1.25с, reset/overlap и bracket
+остаётся прежней. Потеря sampler приводит к отказу, а не к пропуску проверки.
 
 Controller bundle, raw, evidence, TMPDIR, Python venv/cache и simulator bundles
 лежат на hd250 в отдельных каталогах. System disk проверяется отдельно от raw.

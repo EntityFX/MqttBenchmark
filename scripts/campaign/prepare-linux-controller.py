@@ -36,6 +36,7 @@ plan={'schemaVersion':1,'seriesId':base.name,'controllerMode':'linuxLocal',
       'rawControllerRoot':str(base/'raw'),'cpuGuardPercent':args.cpu_threshold_percent,
       'controllerCpuSet':'1-11,13-23','brokerCpuSet':'0','excludedControllerSmtSibling':'12',
       'controllerMemoryMaxBytes':8*1024**3,'brokerMemoryMaxBytes':4*1024**3,
+      'loadGeneratorSampler':'separate .NET process; shared OS monotonic clock; strict maximum interval 1.25s',
       'fallbackEvidence':args.fallback_evidence,'brokerOrder':list(BROKERS),
       'expectedRealRuns':576,'expectedFidelityRuns':576,'expectedRelayRuns':360,
       'modelCapacityNote':'1 Gbit/s Ethernet is a declared simulation assumption; native loopback capacity is not measured'}

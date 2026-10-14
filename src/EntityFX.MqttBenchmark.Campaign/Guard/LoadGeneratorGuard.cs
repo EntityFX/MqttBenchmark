@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Diagnostics;
 
 namespace EntityFX.MqttBenchmark.Campaign;
 
@@ -10,7 +11,7 @@ public sealed class LoadGeneratorGuard : IAsyncDisposable, IMeasurementWindowObs
     private readonly ILoadGeneratorClock clock;
     private readonly CancellationToken externalCancellation;
     private readonly CancellationTokenSource stop;
-    private readonly StreamWriter writer;
+    private readonly StreamWriter? writer;
     private readonly List<LoadGeneratorSample> samples = new();
     private readonly object gate = new();
     private readonly Task sampler;
@@ -29,22 +30,24 @@ public sealed class LoadGeneratorGuard : IAsyncDisposable, IMeasurementWindowObs
         ILoadGeneratorClock? clock = null, CancellationToken cancellationToken = default,
         double? networkThresholdPercent = LoadGeneratorAssessment.NetworkThresholdPercent,
         double cpuThresholdPercent = LoadGeneratorAssessment.CpuThresholdPercent,
-        double maximumIntervalSeconds = LoadGeneratorAssessment.MaximumIntervalSeconds)
+        double maximumIntervalSeconds = LoadGeneratorAssessment.MaximumIntervalSeconds, string? externalSamplerCli = null)
     {
+        if (string.IsNullOrWhiteSpace(externalSamplerCli)) externalSamplerCli = null;
         clock ??= new LoadGeneratorClock();
         CampaignJson.WriteNew(Path.Combine(directory, "load-generator-started.json"), new
         {
             endpoint = endpoint.GetComponents(UriComponents.HostAndPort, UriFormat.UriEscaped),
             startedUtc = clock.UtcNow, startedTick = clock.Timestamp, timestampFrequency = clock.Frequency,
             machine = Environment.MachineName, operatingSystem = System.Runtime.InteropServices.RuntimeInformation.OSDescription,
-            processId = Environment.ProcessId, counterImplementation = countersFactory == null ? "default" : "dependency-injected"
+            processId = Environment.ProcessId, counterImplementation = countersFactory == null ? "default" : "dependency-injected",
+            externalSamplerCli, externalSamplerSha256 = externalSamplerCli == null ? null : CampaignJson.HashFile(externalSamplerCli)
         });
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
             // При отсутствии фабрики используется кроссплатформенная реализация по умолчанию.
             var source = (countersFactory ?? CreateDefaultCounters)(endpoint);
-            return new(directory, source, clock, cancellationToken, networkThresholdPercent, cpuThresholdPercent, maximumIntervalSeconds);
+            return new(directory, source, clock, cancellationToken, networkThresholdPercent, cpuThresholdPercent, maximumIntervalSeconds, externalSamplerCli, endpoint);
         }
         catch (Exception error)
         {
@@ -75,7 +78,7 @@ public sealed class LoadGeneratorGuard : IAsyncDisposable, IMeasurementWindowObs
     }
 
     private LoadGeneratorGuard(string directory, ILoadGeneratorCounters counters, ILoadGeneratorClock clock, CancellationToken cancellationToken,
-        double? networkThresholdPercent, double cpuThresholdPercent, double maximumIntervalSeconds)
+        double? networkThresholdPercent, double cpuThresholdPercent, double maximumIntervalSeconds, string? externalSamplerCli, Uri endpoint)
     {
         (this.directory, this.counters, this.clock, externalCancellation) = (directory, counters, clock, cancellationToken);
         if (networkThresholdPercent is { } threshold && (!double.IsFinite(threshold) || threshold <= 0 || threshold > 100))
@@ -92,6 +95,12 @@ public sealed class LoadGeneratorGuard : IAsyncDisposable, IMeasurementWindowObs
             new(false, new[] { "Sampling has not completed." }, Array.Empty<LoadGeneratorInterval>()),
             maximumIntervalSeconds));
         stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        if (externalSamplerCli != null)
+        {
+            if (clock is not LoadGeneratorClock) throw new ArgumentException("External sampler requires the OS monotonic clock.");
+            sampler = StartExternalSampler(externalSamplerCli, endpoint);
+            return;
+        }
         writer = new(new FileStream(Path.Combine(directory, "load-generator-samples.ndjson"), FileMode.CreateNew, FileAccess.Write,
             FileShare.Read), new UTF8Encoding(false)) { AutoFlush = true };
         try { ReadSample(); }
@@ -100,6 +109,53 @@ public sealed class LoadGeneratorGuard : IAsyncDisposable, IMeasurementWindowObs
         // генератора нагрузка на пул потоков и паузы GC могли откладывать callback таймера
         // на секунды, что guard классифицировал как sampling gap и отклонял попытку.
         sampler = StartDedicatedSamplerThread(Sample);
+    }
+
+    private Task StartExternalSampler(string cli, Uri endpoint)
+    {
+        var info = new ProcessStartInfo("dotnet") { UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true };
+        foreach (var value in new[] { Path.GetFullPath(cli), "sample-guard", "--endpoint", endpoint.ToString(), "--output", Path.GetFullPath(directory), "--parent", Environment.ProcessId.ToString() })
+            info.ArgumentList.Add(value);
+        var process = Process.Start(info) ?? throw new IOException("Could not start external guard sampler.");
+        var ready = Path.Combine(directory, "external-sampler-ready.json");
+        var limit = Stopwatch.StartNew();
+        try
+        {
+            while (!File.Exists(ready))
+            {
+                externalCancellation.ThrowIfCancellationRequested();
+                if (process.HasExited) throw new IOException("External sampler failed: " + process.StandardError.ReadToEnd());
+                if (limit.Elapsed.TotalSeconds > 30) throw new TimeoutException("External sampler did not become ready.");
+                Thread.Sleep(10);
+            }
+            // CreateNew/Flush publishes readiness; another process can briefly observe a locked file.
+            long frequency;
+            while (true)
+            {
+                try { frequency = CampaignJson.Read<ExternalSamplerReady>(ready).TimestampFrequency; break; }
+                catch (IOException) when (limit.Elapsed.TotalSeconds < 30) { Thread.Sleep(10); }
+            }
+            if (frequency != clock.Frequency) throw new InvalidDataException("Sampler monotonic frequency differs from controller.");
+        }
+        catch { if (!process.HasExited) process.Kill(); process.WaitForExit(); process.Dispose(); stop.Dispose(); throw; }
+        var registration = stop.Token.Register(() =>
+        {
+            try { File.WriteAllText(Path.Combine(directory, "external-sampler-stop"), string.Empty); }
+            catch (IOException) { }
+        });
+        return StartDedicatedSamplerThread(() =>
+        {
+            try
+            {
+                if (!process.WaitForExit(300_000)) { process.Kill(); process.WaitForExit(); throw new TimeoutException("External sampler exceeded attempt lifetime."); }
+                var error = process.StandardError.ReadToEnd();
+                if (process.ExitCode != 0) throw new IOException("External sampler failed: " + error);
+                foreach (var line in File.ReadLines(Path.Combine(directory, "load-generator-samples.ndjson")))
+                    samples.Add(JsonSerializer.Deserialize<LoadGeneratorSample>(line, CampaignJson.Options) ?? throw new InvalidDataException("Empty sample."));
+            }
+            catch (Exception error) { samplerFailure = error; }
+            finally { registration.Dispose(); process.Dispose(); }
+        });
     }
 
     private static Task StartDedicatedSamplerThread(Action work)
@@ -140,7 +196,7 @@ public sealed class LoadGeneratorGuard : IAsyncDisposable, IMeasurementWindowObs
         var value = counters.Read();
         var sample = new LoadGeneratorSample(start, clock.Timestamp, startUtc, clock.UtcNow, value);
         samples.Add(sample);
-        writer.WriteLine(JsonSerializer.Serialize(sample, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }));
+        writer!.WriteLine(JsonSerializer.Serialize(sample, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }));
     }
     private void Sample()
     {
@@ -172,7 +228,7 @@ public sealed class LoadGeneratorGuard : IAsyncDisposable, IMeasurementWindowObs
     {
         stop.Cancel();
         await sampler;
-        writer.Dispose();
+        writer?.Dispose();
         stop.Dispose();
         finished = true;
         var result = measurement == null ? new LoadGeneratorAssessment(false, new[] { "Missing measurement window." }, Array.Empty<LoadGeneratorInterval>())

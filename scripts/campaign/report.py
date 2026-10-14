@@ -133,6 +133,7 @@ def build(root, broker, state):
                 '[Манифест серии](../series.json) · [Окружение](../environment.json) · [Реестр архивов](../archive-registry.json)',
                 'Продолжение: `python scripts/campaign/run.py --series <абсолютный каталог серии> --resume`. Проверка сохранённых ZIP и повторная агрегация: `python scripts/campaign/run.py --series <каталог> --verify-only`. Точные argv сохранены в журнале команд серии.']
     document.append(f"CPU guard генератора: **{plan.get('cpuGuardPercent',70)}%** (общесистемный CPU, максимальный пересекающий measurement интервал). Насыщение контроллера не является доказательством предела брокера. При совместном запуске CPU/RAM/дисковый I/O общие для контроллера и брокера. Raw scratch: `{plan.get('rawControllerRoot',str(root/'raw'))}`; после каждой sealed attempt остаются только компактные descriptors.")
+    if plan.get('loadGeneratorSampler'):document.append('Сбор счётчиков: `'+plan['loadGeneratorSampler']+'`. PID, frequency и SHA sampler CLI сохраняются в raw. Лёгкий процесс sampler не приостанавливается сборщиком мусора генератора; пропуски/overlap/reset и границы окна проверяются прежним guard.')
     if state.get('error'):
         document += ['## Диагностика', str(state['error'])]
     for stage in ('calibration', 'validation'):

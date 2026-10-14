@@ -39,5 +39,6 @@ public sealed class DefaultLoadGeneratorGuardFactory : ILoadGeneratorGuardFactor
         double cpuThresholdPercent = LoadGeneratorAssessment.CpuThresholdPercent,
         double maximumIntervalSeconds = LoadGeneratorAssessment.MaximumIntervalSeconds) =>
         LoadGeneratorGuard.Start(endpoint, directory, countersFactory, clock, cancellationToken,
-            networkThresholdPercent, cpuThresholdPercent, maximumIntervalSeconds);
+            networkThresholdPercent, cpuThresholdPercent, maximumIntervalSeconds,
+            Environment.GetEnvironmentVariable("MQB_GUARD_SAMPLER_CLI"));
 }
