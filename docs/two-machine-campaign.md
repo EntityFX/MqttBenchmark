@@ -67,6 +67,9 @@ BrokerFidelity; для relay reference остаётся диагностикой
 В серии Windows требуется≥10GiB перед командой; watchdog прерывает при<6GiB.
 CLI не начинает следующую attempt при<8GiB. На evidence disk требуется≥20GiB,
 watchdog прерывает при<12GiB. Проверяется точный mount TARGET/SOURCE/FSTYPE.
+Guard читает counters на выделенном потоке AboveNormal и ждёт монотонный
+deadline через cancellable kernel wait; sampling не зависит от thread pool
+генератора. Разрывы>1.25с, resets и overlaps по-прежнему отклоняют attempt.
 На системных разделах не создаются полные копии verification; восстановление
 и повторный aggregate идут на hd250. Смена диска, обрыв связи, checksum failure
 или нехватка места останавливают серию и сохраняют доказательства.

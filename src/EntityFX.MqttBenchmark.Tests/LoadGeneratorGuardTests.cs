@@ -276,6 +276,38 @@ public class LoadGeneratorGuardTests
         }
     }
 
+    [TestMethod]
+    public async Task CounterReadsStayOnDedicatedSamplerAfterClockWaits()
+    {
+        using var temp = new CampaignTemp();
+        var clock = new ManualClock();
+        var counters = new ThreadRecordingCounters();
+        await using var guard = LoadGeneratorGuard.Start(new Uri("mqtt://10.10.157.111:1883"), temp.Path, _ => counters, clock);
+        await clock.NextDelayAsync();
+        guard.MeasurementStarted(500, Epoch.AddMilliseconds(500));
+        clock.Advance(1000);
+        await clock.NextDelayAsync();
+        guard.MeasurementEnded(1500, Epoch.AddMilliseconds(1500));
+        var complete = guard.CompleteAsync();
+        clock.Advance(2000);
+        await complete;
+        Assert.AreEqual(3, counters.ThreadNames.Count);
+        foreach (var name in counters.ThreadNames.Skip(1))
+            Assert.AreEqual("load-generator-sampler", name, "Counter reading escaped to the thread pool after an asynchronous delay.");
+    }
+
+    private sealed class ThreadRecordingCounters : ILoadGeneratorCounters
+    {
+        private readonly TestCounters inner = new();
+        public readonly System.Collections.Concurrent.ConcurrentQueue<string?> ThreadNames = new();
+        public LoadGeneratorInterface Network => inner.Network;
+        public LoadGeneratorCounters Read()
+        {
+            ThreadNames.Enqueue(Thread.CurrentThread.Name);
+            return inner.Read();
+        }
+    }
+
     private sealed class ManualClock : ILoadGeneratorClock
     {
         private readonly Channel<bool> waiting = Channel.CreateUnbounded<bool>();

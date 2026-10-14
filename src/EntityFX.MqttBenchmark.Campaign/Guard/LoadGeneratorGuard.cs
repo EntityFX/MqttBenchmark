@@ -99,15 +99,15 @@ public sealed class LoadGeneratorGuard : IAsyncDisposable, IMeasurementWindowObs
         // Сэмплер живёт на выделенном фоне-потоке (не на thread pool): под пиковой нагрузкой
         // генератора нагрузка на пул потоков и паузы GC могли откладывать callback таймера
         // на секунды, что guard классифицировал как sampling gap и отклонял попытку.
-        sampler = StartDedicatedSamplerThread(() => SampleAsync());
+        sampler = StartDedicatedSamplerThread(Sample);
     }
 
-    private static Task StartDedicatedSamplerThread(Func<Task> work)
+    private static Task StartDedicatedSamplerThread(Action work)
     {
         var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var thread = new Thread(() =>
         {
-            try { work().GetAwaiter().GetResult(); completion.TrySetResult(true); }
+            try { work(); completion.TrySetResult(true); }
             catch (Exception error) { completion.TrySetException(error); }
         })
         { IsBackground = true, Name = "load-generator-sampler" };
@@ -142,13 +142,13 @@ public sealed class LoadGeneratorGuard : IAsyncDisposable, IMeasurementWindowObs
         samples.Add(sample);
         writer.WriteLine(JsonSerializer.Serialize(sample, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }));
     }
-    private async Task SampleAsync()
+    private void Sample()
     {
         try
         {
             while (true)
             {
-                await clock.DelayUntilAsync(samples[^1].ReadStartedTick + clock.Frequency, stop.Token);
+                clock.WaitUntil(samples[^1].ReadStartedTick + clock.Frequency, stop.Token);
                 stop.Token.ThrowIfCancellationRequested();
                 ReadSample();
                 lock (gate)

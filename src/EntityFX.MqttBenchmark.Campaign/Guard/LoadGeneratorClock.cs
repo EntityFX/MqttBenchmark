@@ -12,4 +12,18 @@ public sealed class LoadGeneratorClock : ILoadGeneratorClock
         while (Timestamp < deadline)
             await Task.Delay(TimeSpan.FromSeconds(Math.Max(0, (deadline - Timestamp) / (double)Frequency)), cancellationToken);
     }
+
+    // Called only by the dedicated sampler. Native cancellable waiting avoids
+    // Task.Delay callbacks and continuations that require the saturated thread pool.
+    public void WaitUntil(long deadline, CancellationToken cancellationToken)
+    {
+        while (Timestamp < deadline)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var seconds = Math.Max(0, (deadline - Timestamp) / (double)Frequency);
+            if (cancellationToken.WaitHandle.WaitOne(TimeSpan.FromSeconds(seconds)))
+                cancellationToken.ThrowIfCancellationRequested();
+        }
+        cancellationToken.ThrowIfCancellationRequested();
+    }
 }
