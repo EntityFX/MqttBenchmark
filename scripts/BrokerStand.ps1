@@ -8,7 +8,8 @@ param(
     [ValidateRange(1, 60000)][int]$ClockAlignmentBoundMs = 3000,
     [string]$DockerExecutable = 'docker',
     [string]$TrustedBuildProvenanceDirectory,
-    [switch]$NativeWorker
+    [switch]$NativeWorker,
+    [switch]$CaptureUntilFence
 )
 
 Set-StrictMode -Version Latest
@@ -882,7 +883,14 @@ function Write-CaptureNative($Broker) {
     $samples = [Collections.Generic.List[object]]::new()
     $previous = $null
     $captureStart = [Diagnostics.Stopwatch]::GetTimestamp()
-    for ($i = 0; $i -lt $CaptureSeconds; $i++) {
+    # The environment opt-in supports an unchanged measurement CLI: only matrix
+    # captures (>1 sample, with a campaign context) use the completion protocol.
+    # One-sample preflight captures remain fixed-length.
+    $untilFence = $CaptureUntilFence -or ($env:MQB_NATIVE_CAPTURE_UNTIL_FENCE -eq '1' -and
+        $CaptureSeconds -gt 1 -and $inventory.Contains('campaign'))
+    $sampleLimit = if ($untilFence) { [int][Math]::Min(86400, [long]$CaptureSeconds * 4 + 30) } else { $CaptureSeconds }
+    $completedCapture = $false
+    for ($i = 0; $i -lt $sampleLimit; $i++) {
         # Monotonic deadlines from the shared epoch: scheduling jitter does not shift the sample grid.
         $deadline = $captureStart + [long]($i * $frequency)
         while ([Diagnostics.Stopwatch]::GetTimestamp() -lt $deadline) { Start-Sleep -Milliseconds 20 }
@@ -919,11 +927,19 @@ function Write-CaptureNative($Broker) {
         Publish-NativeArtifact $ndjsonPath $sampleLine -Append
         $samples.Add($sample)
         $previous = [ordered]@{ monotonic = $monotonic; cpuTotalSeconds = $cpuTotalSeconds }
-        if ($samples.Count -eq $CaptureSeconds) {
+        $finished = -not $untilFence -and $samples.Count -eq $CaptureSeconds
+        $fencePath = Join-Path $OutputDirectory 'workload-end-fence.json'
+        if ($untilFence -and $samples.Count -ge $CaptureSeconds -and (Test-Path -LiteralPath $fencePath)) {
+            $fence = Get-Content -Raw -LiteralPath $fencePath | ConvertFrom-Json -AsHashtable
+            if ([string]$fence.unitId -cne [string]$run.unitId) { throw 'Telemetry completion fence belongs to another broker process.' }
+            $finished = $monotonic -ge [double]$fence.monotonicSeconds
+        }
+        if ($finished) {
             $endedPath = Join-Path $OutputDirectory 'sampler-ended.json'
-            Write-JsonFile ([ordered]@{ lastSampleTimestamp = $sample.timestamp; lastSampleMonotonicSeconds = $sample.monotonicSeconds; sampleCount = $samples.Count; controllerObservedUtc = [DateTimeOffset]::UtcNow.ToString('O'); unitId = [string]$run.unitId }) "$endedPath.tmp"
+            Write-JsonFile ([ordered]@{ lastSampleTimestamp = $sample.timestamp; lastSampleMonotonicSeconds = $sample.monotonicSeconds; sampleCount = $samples.Count; controllerObservedUtc = [DateTimeOffset]::UtcNow.ToString('O'); unitId = [string]$run.unitId; completionMode = $(if ($untilFence) { 'workload-fence' } else { 'fixed-samples' }); maximumSamples = $sampleLimit }) "$endedPath.tmp"
             Move-Item -LiteralPath "$endedPath.tmp" -Destination $endedPath
             Publish-NativeArtifact $endedPath
+            $completedCapture = $true
         }
         if ($samples.Count -eq 1) {
             $readyPath = Join-Path $OutputDirectory 'telemetry-ready.json'
@@ -931,7 +947,9 @@ function Write-CaptureNative($Broker) {
             Move-Item -LiteralPath "$readyPath.tmp" -Destination $readyPath
             Publish-NativeArtifact $readyPath
         }
+        if ($completedCapture) { break }
     }
+    if (-not $completedCapture) { throw 'Telemetry completion fence was not covered before the bounded capture limit.' }
     if ($samples.Count -lt $CaptureSeconds) { throw 'Telemetry sampler returned fewer samples than requested.' }
     $logsDirectory = Join-Path $OutputDirectory 'logs'
     New-Item -ItemType Directory -Force -Path $logsDirectory | Out-Null

@@ -117,7 +117,9 @@ public sealed class StandSession : IAsyncDisposable
     /// после завершения всех фаз workload ставит fence на удалённые монотонные часы и возвращает
     /// манифест с гарантией, что телеметрия покрывает завершение работы.
     /// </summary>
-    /// <param name="seconds">Длительность захвата сэмплов (должна покрывать warmup + измерение + drain + cooldown + резерв).</param>
+    /// <param name="seconds">Минимальное число секундных отсчётов. Native-сбор продолжается до отсчёта
+    /// после workload fence, но ограничен сверху min(86400, 4*seconds+30) отсчётами;
+    /// фиксированный контейнерный сбор должен покрывать все фазы workload.</param>
     /// <param name="measurement">Измеряемая работа (запуск load-guard, warmup, измерение, drain).</param>
     /// <param name="cancellationToken">Токен отмены; прерывает ожидание готовности и само измерение.</param>
     /// <returns>Манифест телеметрии после успешной проверки fence-покрытия.</returns>
@@ -129,7 +131,12 @@ public sealed class StandSession : IAsyncDisposable
         CancellationToken cancellationToken = default)
     {
         using var captureCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var capture = telemetry.CaptureSamplesAsync(seconds, captureCancellation.Token);
+        // Native sampling has a bounded upper limit, but may outlive the nominal
+        // capture envelope until a final sample covers the workload's fence.
+        var selected = JsonNode.Parse(File.ReadAllBytes(GetSelectedPath()))!;
+        var native = selected["brokers"]!.AsArray().Single(x => x!["name"]!.GetValue<string>() ==
+            selected["activeBroker"]!.GetValue<string>())!["runtime"]?.GetValue<string>() == "native";
+        var capture = telemetry.CaptureSamplesAsync(seconds, captureCancellation.Token, untilFence: native);
         try
         {
             var startup = Stopwatch.StartNew();

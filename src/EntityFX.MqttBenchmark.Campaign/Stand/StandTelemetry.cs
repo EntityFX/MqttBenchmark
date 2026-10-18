@@ -34,9 +34,9 @@ public sealed class StandTelemetry
     public async Task<TelemetryManifest> CaptureAsync(int seconds, CancellationToken cancellationToken = default) =>
         WriteTelemetryManifest(await CaptureSamplesAsync(seconds, cancellationToken));
 
-    public async Task<int> CaptureSamplesAsync(int seconds, CancellationToken cancellationToken)
+    public async Task<int> CaptureSamplesAsync(int seconds, CancellationToken cancellationToken, bool untilFence = false)
     {
-        await lifecycle.InvokeAsync("capture", selectedPath, output, seconds, cancellationToken);
+        await lifecycle.InvokeAsync("capture", selectedPath, output, seconds, cancellationToken, untilFence);
         var samples = File.ReadAllLines(Path.Combine(output, "telemetry.ndjson")).Where(x => !string.IsNullOrWhiteSpace(x))
             .Select(x => JsonNode.Parse(x)!).ToArray();
         ValidateSamples(samples, seconds, cpuScope);
