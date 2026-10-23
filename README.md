@@ -1,20 +1,32 @@
-# MqttBenchmark
+# MqttBenchmark — измерение реальных MQTT-брокеров
 
-Измерение MQTT-брокеров и воспроизводимые кампании **v3** для калибровки MqttY: 288 успешных запусков, 96 наблюдаемых точек, exact-ID delivery accounting, immutable retry/resume и SHA-256 provenance.
+MqttBenchmark создаёт MQTT-нагрузку и измеряет работу Aedes, Mosquitto, ActiveMQ Classic и EMQX. Он сохраняет первичные события публикации и получения, задержки, ошибки, телеметрию процесса и сведения об окружении. Наблюдения можно использовать для сравнения брокеров и построения их моделей в MqttY.
 
-Начните с [индекса документации](docs/README.md): установка без Docker, подготовка Ubuntu/ALT/Windows, локальный и SSH-стенд, ручной и управляемый запуск, архитектура и метрики. Aedes/Mosquitto/ActiveMQ Classic запускаются непосредственно в Linux/Windows; EMQX — в Linux, на Windows внутри Ubuntu WSL2. Статус фактических проверок отделён от поддерживаемого маршрута.
+## Что делает приложение
 
-Из корня проекта в PowerShell 7, после подготовки брокера и spec:
+- Запускает предварительную проверку и матрицу нагрузок с повторами.
+- Работает с локальным или удалённым стендом через SSH; доступные варианты запуска зависят от брокера и ОС.
+- Раздельно учитывает попытки API, успешные завершения публикаций и уникальные доставки subscriber.
+- Контролирует пригодность измерения через guard, CPU affinity и покрытие телеметрией.
+- Поддерживает сохранение неудачных попыток, повтор и продолжение совместимой кампании.
+- Проверяет целостность артефактов и рассчитывает агрегированные наблюдения.
 
-```powershell
-./scripts/NewNativeStand.ps1 -BrokerSpecPath config/brokers.spec.local.json `
-  -StandPath config/broker-stand.local.json -CampaignPath config/campaign.local.json
-./scripts/RunNativeCampaign.ps1 -ConfigPath config/campaign.local.json `
-  -StandPath config/broker-stand.local.json -CampaignDirectory artifacts/pilot-001 -Pilot
+Основные части находятся в `src`: CLI, управление кампаниями, транспорт, сбор метрик и тесты. Скрипты развёртывания расположены в `scripts`, примеры конфигураций — в `config` и `docs/examples`.
+
+## Быстрый старт
+
+Команда выполняется из корня этого репозитория. Нужен .NET SDK, поддерживающий сборку `net6.0`, и .NET 6 runtime:
+
+```bash
+dotnet run --project src/EntityFX.MqttBenchmark.Cli -c Release -- --help
 ```
 
-Pilot не даёт полного набора для калибровки. Запуск требует чистых tracked исходников; примеры настройки и ручной CLI-эквивалент — в [локальном руководстве](docs/local-stand.md). Контейнерный config/broker-stand.v1.json не является native-инвентарём.
+Для измерений дополнительно нужны установленный брокер, настройки стенда и кампании, доступные ресурсы и место для первичных журналов. На удалённом стенде подготавливаются SSH и инструменты управления. Порядок установки и полная команда запуска описаны в руководстве.
 
-[Переносимый пакет](DEPLOYMENT.md) · [Калибровка MqttY](../mqtty/doc/calibration-v3.md) · [Исторические результаты](../diss/doc/results-and-evidence.md).
+Завершение программы не означает точности измерения, а успешная публикация не означает доставку subscriber. CPU/RSS относятся к наблюдаемому процессу; потери характеризуют конкретный измерительный тракт и окно наблюдения.
 
-[Последовательная двухмашинная серия](docs/two-machine-campaign.md): отдельные Markdown/HTML-отчёты, независимый контроль и перенос каждой sealed attempt на evidence disk.
+## Документация
+
+Подробные руководства централизованы в [mqtty-meta/docs/mqtt-benchmark](https://github.com/EntityFX/mqtty-meta/blob/develop/docs/mqtt-benchmark/README.md): подготовка машины, установка брокеров, размещение стенда, метрики, кампании и воспроизведение. В локальной копии мета-репозитория откройте `docs/mqtt-benchmark/README.md` из его корня.
+
+Отчёты и компактные данные опубликованы в [mqtty-meta/reports](https://github.com/EntityFX/mqtty-meta/blob/develop/reports/mqtt-benchmark/README.md). Полные первичные журналы и архивы хранятся на выделенном диске результатов и не добавляются в Git.
