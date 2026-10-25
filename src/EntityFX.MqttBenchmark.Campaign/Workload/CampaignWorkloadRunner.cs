@@ -34,12 +34,14 @@ public sealed class CampaignWorkloadRunner
         using var subscriber = transport.CreateClient();
         var ledger = new DeliveryLedger();
         var clock = Stopwatch.StartNew();
+        using var phases = config.RecordPublicationCohort ? new WorkloadPhaseRecorder(directory, key.Qos) : null;
         var topic = "mqttbenchmark/" + IdentifiedPayload.ReadId(IdentifiedPayload.Create(16, campaignId, runId, 0, 0));
         var deliveryGate = new object();
         var collecting = true;
         subscriber.ApplicationMessageReceivedAsync += args =>
         {
-            if (args.ApplicationMessage.Topic != topic) return Task.CompletedTask;
+            var warmup = args.ApplicationMessage.Topic == topic + "/warmup";
+            if (args.ApplicationMessage.Topic != topic && !(config.RecordPublicationCohort && warmup)) return Task.CompletedTask;
             lock (deliveryGate)
             {
                 if (!collecting) return Task.CompletedTask;
@@ -47,25 +49,32 @@ public sealed class CampaignWorkloadRunner
                 var id = payload.Count == key.MessageBytes ? IdentifiedPayload.ReadId(payload.AsSpan())
                     : "malformed:" + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(payload.AsSpan()));
                 var seconds = clock.Elapsed.TotalSeconds;
-                ledger.Deliver(id, seconds);
+                if (!warmup) ledger.Deliver(id, seconds);
                 deliveryLog.Write(new { id, elapsedSeconds = seconds, payloadBytes = payload.Count });
             }
             return Task.CompletedTask;
         };
         try
         {
+            ObserveConnection(subscriber, "subscriber");
             await transport.ConnectAsync(subscriber, endpoint, cancellationToken);
             await transport.SubscribeAsync(subscriber, topic, key.Qos, cancellationToken);
+            if (config.RecordPublicationCohort)
+                await transport.SubscribeAsync(subscriber, topic + "/warmup", key.Qos, cancellationToken);
             for (var i = 0; i < key.Publishers; i++)
             {
                 var client = transport.CreateClient(); clients.Add(client);
+                ObserveConnection(client, "publisher-" + i);
                 await transport.ConnectAsync(client, endpoint, cancellationToken);
             }
             await PublishWindowAsync(config.WarmupSeconds, false);
             var startedUtc = DateTimeOffset.UtcNow;
             var started = Stopwatch.GetTimestamp();
+            var submissionStart = clock.Elapsed.TotalSeconds;
+            phases?.Begin(submissionStart, config.MeasurementSeconds);
             measurementObserver?.MeasurementStarted(started, startedUtc);
-            await PublishWindowAsync(config.MeasurementSeconds, true);
+            await PublishWindowAsync(config.MeasurementSeconds, true,
+                config.RecordPublicationCohort ? submissionStart + config.MeasurementSeconds : null);
             var ended = Stopwatch.GetTimestamp();
             var endedUtc = DateTimeOffset.UtcNow;
             measurementObserver?.MeasurementEnded(ended, endedUtc);
@@ -77,10 +86,12 @@ public sealed class CampaignWorkloadRunner
                 await Task.Delay(TimeSpan.FromMilliseconds(10), cancellationToken);
             MeasurementSummary summary;
             lock (deliveryGate) { collecting = false; summary = ledger.Snapshot(key.Qos, actualSeconds); }
+            phases?.EndDrain(clock.Elapsed.TotalSeconds);
             var observation = new RunObservation(key, summary, startedUtc, endedUtc, reason,
                 clock.Elapsed.TotalSeconds - drainStart, rttBaselineMs);
             // Cooldown — ровно из конфигурации кампании (Validate гарантирует конечность и неотрицательность).
             await Task.Delay(TimeSpan.FromSeconds(config.CooldownSeconds), cancellationToken);
+            if (phases != null) phases.Completed = true;
             return observation;
         }
         finally
@@ -90,9 +101,17 @@ public sealed class CampaignWorkloadRunner
             await transport.DisconnectAsync(subscriber);
         }
 
-        async Task PublishWindowAsync(double seconds, bool measure)
+        void ObserveConnection(IMqttClient client, string name)
         {
-            var deadline = clock.Elapsed.TotalSeconds + seconds;
+            if (phases == null) return;
+            client.ConnectedAsync += _ => { phases.Connection(name, "connected", clock.Elapsed.TotalSeconds); return Task.CompletedTask; };
+            client.DisconnectedAsync += args => { phases.Connection(name, "disconnected", clock.Elapsed.TotalSeconds,
+                args.Exception?.Message ?? args.Reason.ToString()); return Task.CompletedTask; };
+        }
+
+        async Task PublishWindowAsync(double seconds, bool measure, double? fixedDeadline = null)
+        {
+            var deadline = fixedDeadline ?? clock.Elapsed.TotalSeconds + seconds;
             await Task.WhenAll(clients.Select((client, publisher) => Task.Run(async () =>
             {
                 long sequence = 0;
@@ -102,30 +121,32 @@ public sealed class CampaignWorkloadRunner
                     var currentSequence = sequence++;
                     var payload = IdentifiedPayload.Create(key.MessageBytes, campaignId, runId + (measure ? "" : "/warmup"), publisher, currentSequence);
                     var id = IdentifiedPayload.ReadId(payload);
-                    if (measure)
+                    var attemptSeconds = clock.Elapsed.TotalSeconds;
+                    if (config.RecordPublicationCohort && attemptSeconds >= deadline) break;
+                    if (measure) ledger.Attempt(id);
+                    if (measure || config.RecordPublicationCohort)
                     {
-                        ledger.Attempt(id);
                         publishLog.Write(new { @event = "attempt", id, publisher, sequence = currentSequence,
-                            payloadBytes = payload.Length, elapsedSeconds = clock.Elapsed.TotalSeconds });
+                            payloadBytes = payload.Length, elapsedSeconds = attemptSeconds });
                     }
                     var began = clock.Elapsed.TotalMilliseconds;
                     try
                     {
                         await transport.PublishAsync(client, measure ? topic : topic + "/warmup", payload, key.Qos, cancellationToken);
                         var elapsed = clock.Elapsed.TotalMilliseconds - began;
-                        if (measure)
+                        if (measure) ledger.Complete(id, elapsed);
+                        if (measure || config.RecordPublicationCohort)
                         {
-                            ledger.Complete(id, elapsed);
                             publishLog.Write(new { @event = "completed", id, elapsedSeconds = clock.Elapsed.TotalSeconds,
                                 latencyMs = key.Qos == 0 ? (double?)null : elapsed });
                         }
                     }
                     catch (Exception error) when (!cancellationToken.IsCancellationRequested)
                     {
-                        if (measure)
+                        if (measure || config.RecordPublicationCohort)
                         {
                             var failure = error.GetType().Name + ": " + error.Message;
-                            ledger.Fail(id, failure);
+                            if (measure) ledger.Fail(id, failure);
                             publishLog.Write(new { @event = "failed", id, error = failure, elapsedSeconds = clock.Elapsed.TotalSeconds });
                         }
                     }

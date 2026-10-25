@@ -51,6 +51,8 @@ public sealed class CampaignDefinition
     public double? CpuThresholdPercent { get; set; }
     /// <summary>Максимально допустимый интервал между сэмплами load-generator guard'а, секунды; null сохраняет дефолт 1.25 с.</summary>
     public double? MaximumGuardIntervalSeconds { get; set; }
+    /// <summary>Opt-in event cohorts and exact monotonic submission boundaries for new validation trials.</summary>
+    public bool RecordPublicationCohort { get; set; }
 
     /// <summary>Возвращает сетевой порог (в процентах) для брокера; <c>null</c> означает
     /// информационный режим (без принудительного ограничения). Требует валидной конфигурации.</summary>
