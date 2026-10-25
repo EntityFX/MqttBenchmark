@@ -53,6 +53,8 @@ public sealed class CampaignDefinition
     public double? MaximumGuardIntervalSeconds { get; set; }
     /// <summary>Opt-in event cohorts and exact monotonic submission boundaries for new validation trials.</summary>
     public bool RecordPublicationCohort { get; set; }
+    /// <summary>For new cohort trials: observe until submission end plus DrainTimeoutSeconds, without early quiet/all-delivered exit.</summary>
+    public bool ObserveFullDrainWindow { get; set; }
 
     /// <summary>Возвращает сетевой порог (в процентах) для брокера; <c>null</c> означает
     /// информационный режим (без принудительного ограничения). Требует валидной конфигурации.</summary>
@@ -92,6 +94,8 @@ public sealed class CampaignDefinition
     /// <exception cref="InvalidDataException">Любой инвариант нарушен; сообщение описывает нарушение.</exception>
     public void Validate()
     {
+        if (ObserveFullDrainWindow && !RecordPublicationCohort)
+            throw new InvalidDataException("A fixed observation horizon requires publication cohort recording.");
         if (SchemaVersion != 3)
             throw new InvalidDataException("Campaign v3 is required (schemaVersion must be 3).");
         if (Brokers is not { Length: > 0 } || Brokers.Any(string.IsNullOrWhiteSpace) ||

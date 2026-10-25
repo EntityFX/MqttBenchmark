@@ -49,7 +49,8 @@ public sealed class CampaignWorkloadRunner
                 var id = payload.Count == key.MessageBytes ? IdentifiedPayload.ReadId(payload.AsSpan())
                     : "malformed:" + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(payload.AsSpan()));
                 var seconds = clock.Elapsed.TotalSeconds;
-                if (!warmup) ledger.Deliver(id, seconds);
+                if (!warmup && (!config.ObserveFullDrainWindow || !phases!.End.HasValue
+                    || seconds <= phases.End.Value + config.DrainTimeoutSeconds)) ledger.Deliver(id, seconds);
                 deliveryLog.Write(new { id, elapsedSeconds = seconds, payloadBytes = payload.Count });
             }
             return Task.CompletedTask;
@@ -59,8 +60,12 @@ public sealed class CampaignWorkloadRunner
             ObserveConnection(subscriber, "subscriber");
             await transport.ConnectAsync(subscriber, endpoint, cancellationToken);
             await transport.SubscribeAsync(subscriber, topic, key.Qos, cancellationToken);
+            phases?.Subscription("subscriber", subscriber.Options.ClientId, topic, key.Qos, key.Qos, clock.Elapsed.TotalSeconds);
             if (config.RecordPublicationCohort)
+            {
                 await transport.SubscribeAsync(subscriber, topic + "/warmup", key.Qos, cancellationToken);
+                phases?.Subscription("subscriber", subscriber.Options.ClientId, topic + "/warmup", key.Qos, key.Qos, clock.Elapsed.TotalSeconds);
+            }
             for (var i = 0; i < key.Publishers; i++)
             {
                 var client = transport.CreateClient(); clients.Add(client);
@@ -81,12 +86,28 @@ public sealed class CampaignWorkloadRunner
             var actualSeconds = (ended - started) / (double)Stopwatch.Frequency;
             var drainStart = clock.Elapsed.TotalSeconds;
             string? reason;
-            while ((reason = DrainPolicy.Decide(ledger, drainStart, clock.Elapsed.TotalSeconds,
-                config.QuietPeriodSeconds, config.DrainTimeoutSeconds)) == null)
-                await Task.Delay(TimeSpan.FromMilliseconds(10), cancellationToken);
+            if (config.ObserveFullDrainWindow)
+            {
+                var horizon = phases!.End!.Value + config.DrainTimeoutSeconds;
+                if (drainStart > horizon)
+                {
+                    phases.EndDrain(horizon, drainStart);
+                    throw new InvalidDataException("Publication outcomes exceeded the fixed observation horizon; inspect raw pending IDs.");
+                }
+                while (clock.Elapsed.TotalSeconds < horizon)
+                    await Task.Delay(TimeSpan.FromMilliseconds(1), cancellationToken);
+                phases.EndDrain(horizon, clock.Elapsed.TotalSeconds);
+                reason = "fixedObservationHorizon";
+            }
+            else
+            {
+                while ((reason = DrainPolicy.Decide(ledger, drainStart, clock.Elapsed.TotalSeconds,
+                    config.QuietPeriodSeconds, config.DrainTimeoutSeconds)) == null)
+                    await Task.Delay(TimeSpan.FromMilliseconds(10), cancellationToken);
+                phases?.EndDrain(clock.Elapsed.TotalSeconds);
+            }
             MeasurementSummary summary;
             lock (deliveryGate) { collecting = false; summary = ledger.Snapshot(key.Qos, actualSeconds); }
-            phases?.EndDrain(clock.Elapsed.TotalSeconds);
             var observation = new RunObservation(key, summary, startedUtc, endedUtc, reason,
                 clock.Elapsed.TotalSeconds - drainStart, rttBaselineMs);
             // Cooldown — ровно из конфигурации кампании (Validate гарантирует конечность и неотрицательность).
@@ -104,8 +125,8 @@ public sealed class CampaignWorkloadRunner
         void ObserveConnection(IMqttClient client, string name)
         {
             if (phases == null) return;
-            client.ConnectedAsync += _ => { phases.Connection(name, "connected", clock.Elapsed.TotalSeconds); return Task.CompletedTask; };
-            client.DisconnectedAsync += args => { phases.Connection(name, "disconnected", clock.Elapsed.TotalSeconds,
+            client.ConnectedAsync += _ => { phases.Connection(name, client.Options.ClientId, "connected", clock.Elapsed.TotalSeconds); return Task.CompletedTask; };
+            client.DisconnectedAsync += args => { phases.Connection(name, client.Options.ClientId, "disconnected", clock.Elapsed.TotalSeconds,
                 args.Exception?.Message ?? args.Reason.ToString()); return Task.CompletedTask; };
         }
 
