@@ -55,6 +55,8 @@ public sealed class CampaignDefinition
     public bool RecordPublicationCohort { get; set; }
     /// <summary>For new cohort trials: observe until submission end plus DrainTimeoutSeconds, without early quiet/all-delivered exit.</summary>
     public bool ObserveFullDrainWindow { get; set; }
+    /// <summary>Diagnostic-only opt-out of message-event files; never changes cohort timing or accounting.</summary>
+    public bool WriteMessageEventLogs { get; set; } = true;
 
     /// <summary>Возвращает сетевой порог (в процентах) для брокера; <c>null</c> означает
     /// информационный режим (без принудительного ограничения). Требует валидной конфигурации.</summary>
@@ -94,6 +96,8 @@ public sealed class CampaignDefinition
     /// <exception cref="InvalidDataException">Любой инвариант нарушен; сообщение описывает нарушение.</exception>
     public void Validate()
     {
+        if (!WriteMessageEventLogs && (!RecordPublicationCohort || !ObserveFullDrainWindow))
+            throw new InvalidDataException("Disabling message-event files requires an explicit cohort trial with full observation.");
         if (ObserveFullDrainWindow && !RecordPublicationCohort)
             throw new InvalidDataException("A fixed observation horizon requires publication cohort recording.");
         if (SchemaVersion != 3)

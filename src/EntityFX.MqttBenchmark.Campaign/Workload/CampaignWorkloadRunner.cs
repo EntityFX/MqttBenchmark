@@ -24,17 +24,17 @@ public sealed class CampaignWorkloadRunner
     {
         config.Validate();
         Directory.CreateDirectory(directory);
-        using var publishLog = new CampaignEventLog(Path.Combine(directory, "publishes.ndjson"));
+        using var publishLog = config.WriteMessageEventLogs ? new CampaignEventLog(Path.Combine(directory, "publishes.ndjson")) : null;
         // Доставки журналируются буферизованно: обработчик ниже вызывается из сетевого callback'а
         // MQTT-клиента, и синхронная запись на диск под замком ограничивала приёмник
         // величиной ~1 тыс. записей/с. Из-за этого измеренный deliveryLossRate отражал
         // пропускную способность стенда, а не потери брокера.
-        await using var deliveryLog = new BufferedEventLog(Path.Combine(directory, "deliveries.ndjson"));
+        await using var deliveryLog = config.WriteMessageEventLogs ? new BufferedEventLog(Path.Combine(directory, "deliveries.ndjson")) : null;
         var clients = new List<IMqttClient>();
         using var subscriber = transport.CreateClient();
         var ledger = new DeliveryLedger();
         var clock = Stopwatch.StartNew();
-        using var phases = config.RecordPublicationCohort ? new WorkloadPhaseRecorder(directory, key.Qos) : null;
+        using var phases = config.RecordPublicationCohort ? new WorkloadPhaseRecorder(directory, key.Qos, config.WriteMessageEventLogs) : null;
         var topic = "mqttbenchmark/" + IdentifiedPayload.ReadId(IdentifiedPayload.Create(16, campaignId, runId, 0, 0));
         var deliveryGate = new object();
         var collecting = true;
@@ -51,7 +51,7 @@ public sealed class CampaignWorkloadRunner
                 var seconds = clock.Elapsed.TotalSeconds;
                 if (!warmup && (!config.ObserveFullDrainWindow || !phases!.End.HasValue
                     || seconds <= phases.End.Value + config.DrainTimeoutSeconds)) ledger.Deliver(id, seconds);
-                deliveryLog.Write(new { id, elapsedSeconds = seconds, payloadBytes = payload.Count });
+                deliveryLog?.Write(new { id, elapsedSeconds = seconds, payloadBytes = payload.Count });
             }
             return Task.CompletedTask;
         };
@@ -147,7 +147,7 @@ public sealed class CampaignWorkloadRunner
                     if (measure) ledger.Attempt(id);
                     if (measure || config.RecordPublicationCohort)
                     {
-                        publishLog.Write(new { @event = "attempt", id, publisher, sequence = currentSequence,
+                        publishLog?.Write(new { @event = "attempt", id, publisher, sequence = currentSequence,
                             payloadBytes = payload.Length, elapsedSeconds = attemptSeconds });
                     }
                     var began = clock.Elapsed.TotalMilliseconds;
@@ -158,7 +158,7 @@ public sealed class CampaignWorkloadRunner
                         if (measure) ledger.Complete(id, elapsed);
                         if (measure || config.RecordPublicationCohort)
                         {
-                            publishLog.Write(new { @event = "completed", id, elapsedSeconds = clock.Elapsed.TotalSeconds,
+                            publishLog?.Write(new { @event = "completed", id, elapsedSeconds = clock.Elapsed.TotalSeconds,
                                 latencyMs = key.Qos == 0 ? (double?)null : elapsed });
                         }
                     }
@@ -168,7 +168,7 @@ public sealed class CampaignWorkloadRunner
                         {
                             var failure = error.GetType().Name + ": " + error.Message;
                             if (measure) ledger.Fail(id, failure);
-                            publishLog.Write(new { @event = "failed", id, error = failure, elapsedSeconds = clock.Elapsed.TotalSeconds });
+                            publishLog?.Write(new { @event = "failed", id, error = failure, elapsedSeconds = clock.Elapsed.TotalSeconds });
                         }
                     }
                 }

@@ -9,16 +9,18 @@ internal sealed class WorkloadPhaseRecorder : IDisposable
     private readonly CampaignEventLog connections;
     private readonly CampaignEventLog subscriptions;
     private readonly int qos;
+    private readonly bool messageEventLogsEnabled;
     public double? Start { get; private set; }
     public double? End { get; private set; }
     public double? DrainEnd { get; private set; }
     public double? ObservationStopped { get; private set; }
     public bool Completed { get; set; }
 
-    public WorkloadPhaseRecorder(string directory, int qos)
+    public WorkloadPhaseRecorder(string directory, int qos, bool messageEventLogsEnabled = true)
     {
         path = Path.Combine(directory, "phases.json");
         this.qos = qos;
+        this.messageEventLogsEnabled = messageEventLogsEnabled;
         connections = new CampaignEventLog(Path.Combine(directory, "connections.ndjson"));
         subscriptions = new CampaignEventLog(Path.Combine(directory, "subscriptions.ndjson"));
     }
@@ -43,6 +45,7 @@ internal sealed class WorkloadPhaseRecorder : IDisposable
         JsonSerializer.Serialize(output, new { timeOrigin = "sharedMonotonic", qos,
             measurementStartSeconds = Start, measurementEndSeconds = End,
             drainEndSeconds = DrainEnd, observationStoppedSeconds = ObservationStopped, completed = Completed,
+            messageEventLogsEnabled,
             policy = "closedLoopPerPublisher; fixed submission deadline; outcomes observed through drain" });
     }
 }
