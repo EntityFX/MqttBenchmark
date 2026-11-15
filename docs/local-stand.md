@@ -91,7 +91,7 @@ Launcher поддерживает процесс, отличный от файл
 ./scripts/PinNativeExecutable.ps1 -StandPath config/broker-stand.local.json -Executable /usr/sbin/mosquitto
 ```
 
-В кампании должны совпадать deploymentMode/cpuMode и набор brokers; `customImageBrokers` задайте `[]`, для loopback все network thresholds — `null`. Для `hostAllCores` cpuset пустой. [Полный контракт](campaign-v3.md) — источник этих правил.
+В кампании должны совпадать deploymentMode/cpuMode и набор brokers; `customImageBrokers` задайте `[]`, для loopback все network thresholds — `null`. Для `hostAllCores` cpuset пустой. [Полный контракт](#контракт-кампании-v3) — источник этих правил.
 
 ### Ручной старт процесса
 
@@ -137,7 +137,7 @@ dotnet run -c Release --project src/EntityFX.MqttBenchmark.Cli -- aggregate `
   --raw artifacts/local-pilot-001 --output artifacts/local-aggregate-001
 ```
 
-`aggregate` требует `--stand` и полного покрытия именно выбранной кампании. Для одного брокера это observations с 72 runs / 24 points; **MqttY calibrate такой файл не принимает**. Для переноса в MqttY соберите одну четырёхброкерную кампанию 288/96 с единой identity. Отдельные агрегаты брокеров нельзя просто склеить в JSON. Дальнейший шаг — [калибровка](../../mqtty/doc/calibration-v3.md).
+`aggregate` требует `--stand` и полного покрытия именно выбранной кампании. Для одного брокера это observations с 72 runs / 24 points; **MqttY calibrate такой файл не принимает**. Для переноса в MqttY соберите одну четырёхброкерную кампанию 288/96 с единой identity. Отдельные агрегаты брокеров нельзя просто склеить в JSON. Дальнейший шаг — калибровка в MqttY.
 
 ## Автоматизированный маршрут тех же команд
 

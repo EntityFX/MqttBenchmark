@@ -1,6 +1,6 @@
 # Архитектура запуска и сбора метрик
 
-Стенд разделяет жизненный цикл брокера, протокольную нагрузку и доказательства измерения. Один компьютер совмещает роли; на двух компьютерах worker работает на broker host, а CLI и MQTTnet — на контроллере. Все маршруты используют один контракт v3. При 3+ машинах nativeHost/dockerContext выбираются по broker entry; matrix остаётся последовательной. [Варианты размещения](deployment-layouts.md).
+Стенд разделяет жизненный цикл брокера, протокольную нагрузку и доказательства измерения. Один компьютер совмещает роли; на двух компьютерах worker работает на broker host, а CLI и MQTTnet — на контроллере. Все маршруты используют один контракт v3. При 3+ машинах nativeHost/dockerContext выбираются по broker entry; matrix остаётся последовательной. [Варианты размещения](metrics.md).
 
 ```mermaid
 flowchart LR
@@ -63,4 +63,4 @@ StandSession хранит исходный инвентарь и создаёт 
 | CPU/NIC контроллера | [Guard](../src/EntityFX.MqttBenchmark.Campaign/Guard/) |
 | Агрегация | [CampaignAggregator.cs](../src/EntityFX.MqttBenchmark.Campaign/CampaignAggregator.cs) |
 
-Установка и режим запуска не определяют качество профиля сами по себе. Топология, observer overhead, subscriber, resource enforcement и сетевой путь остаются частью установки. Формулы и scopes — в [метриках](metrics.md), точные CLI/options — в [контракте кампании](campaign-v3.md).
+Установка и режим запуска не определяют качество профиля сами по себе. Топология, observer overhead, subscriber, resource enforcement и сетевой путь остаются частью установки. Формулы и scopes — в [метриках](metrics.md), точные CLI/options — в [контракте кампании](metrics.md).

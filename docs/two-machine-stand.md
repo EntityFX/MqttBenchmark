@@ -84,7 +84,7 @@ ssh -i "$env:USERPROFILE/.ssh/mqtty_stand" researcher@192.0.2.20
 
 На Windows-контроллере transport по умолчанию выбирает `usr/bin/ssh.exe` из установленного Git for Windows, обнаруженного через `git` на PATH. Системный OpenSSH остаётся сервером на Windows broker host. Это разные роли: в проверенном Windows SSH-сеансе системный клиент9.5p2 зависал на перенаправленном stdin, а клиент Git10.5p1 передал worker успешно. Явный `nativeHost.sshExecutable`, например `C:/Program Files/Git/usr/bin/ssh.exe`, имеет приоритет; пробелы в этом локальном пути допустимы. Если Git SSH не найден, используется `ssh` на PATH — его передачу stdin нужно проверить до кампании. На Linux по умолчанию используется `ssh` на PATH.
 
-Для подготовки руками используйте структуру [инвентаря](local-stand.md), вычислите SHA-256 на broker host, заполните launcher identity и добавьте тот же nativeHost. Режимы CPU/deployment обязаны совпадать с кампанией. Один удалённый host использует `singleHostSequential`; `distributedHosts` обозначает несколько broker hosts, не просто пару «контроллер + стенд». [Маршрут 3+ машин](deployment-layouts.md).
+Для подготовки руками используйте структуру [инвентаря](local-stand.md), вычислите SHA-256 на broker host, заполните launcher identity и добавьте тот же nativeHost. Режимы CPU/deployment обязаны совпадать с кампанией. Один удалённый host использует `singleHostSequential`; `distributedHosts` обозначает несколько broker hosts, не просто пару «контроллер + стенд». [Маршрут 3+ машин](metrics.md).
 
 ## 5. Запуск через CLI
 
@@ -105,7 +105,7 @@ dotnet run -c Release --project src/EntityFX.MqttBenchmark.Cli -- matrix `
 
 SSH-lease в `workRoot/active-stand.json` предотвращает одновременное использование хоста разными контроллерами. После штатной managed-остановки процесс и lease освобождаются; external-процесс остаётся, lease освобождается. Если контроллер аварийно исчез, проверьте remote run-provenance и PID/start identity, сохраните доказательства, остановите принадлежащий этому тесту процесс и только затем удалите его stale lease. Не удаляйте lease живой кампании. Ctrl+C запускает штатную попытку остановки; при потере SSH связь надо восстановить для cleanup.
 
-Для запуска скриптом вместо этих CLI-команд используйте `RunNativeCampaign.ps1` из [локального руководства](local-stand.md#автоматизированный-маршрут-тех-же-команд), с теми же config/stand и новым campaign directory. Режим external требует заранее работающего процесса на удалённом хосте; script не запускает его вместо оператора.
+Для запуска скриптом вместо этих CLI-команд используйте `RunNativeCampaign.ps1` из [локального руководства](local-stand.md), с теми же config/stand и новым campaign directory. Режим external требует заранее работающего процесса на удалённом хосте; script не запускает его вместо оператора.
 
 ## 6. Полный набор на Windows через WSL2
 
