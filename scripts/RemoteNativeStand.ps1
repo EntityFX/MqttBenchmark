@@ -59,6 +59,8 @@ function Invoke-RemoteNativeStand($Inventory, $HostConfig) {
         repository = $repository; workRoot = $workRoot
         run = ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($OutputDirectory + $(if ($Inventory.Contains('nativeSessionId')) { '|' + $Inventory.nativeSessionId }))))).ToLowerInvariant()
         action = $Action; seconds = $CaptureSeconds; healthTimeout = $HealthTimeoutSeconds; clockBound = $ClockAlignmentBoundMs
+        captureUntilFence = [bool]($CaptureUntilFence -or ($env:MQB_NATIVE_CAPTURE_UNTIL_FENCE -eq '1' -and
+            $CaptureSeconds -gt 1 -and $Inventory.Contains('campaign')))
     }
     $payloadBase64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes((ConvertTo-Json $payload -Compress)))
     $worker = @'
@@ -106,7 +108,7 @@ if ($p.action -eq 'start') {
 }
 $code=1
 try {
-    & (Get-Process -Id $PID).Path -NoProfile -File $scriptPath -NativeWorker -Action $p.action -ConfigPath $configPath -OutputDirectory $directory -CaptureSeconds $p.seconds -HealthTimeoutSeconds $p.healthTimeout -ClockAlignmentBoundMs $p.clockBound
+    & (Get-Process -Id $PID).Path -NoProfile -File $scriptPath -NativeWorker -Action $p.action -ConfigPath $configPath -OutputDirectory $directory -CaptureSeconds $p.seconds -CaptureUntilFence:([bool]$p.captureUntilFence) -HealthTimeoutSeconds $p.healthTimeout -ClockAlignmentBoundMs $p.clockBound
     $code=$LASTEXITCODE
     if (($p.action -eq 'clock') -and ($code -eq 0)) {
         # Cold PowerShell startup and executable hashing precede these round trips.

@@ -71,7 +71,8 @@ public sealed class StandLifecycle
         return !string.IsNullOrWhiteSpace(context) ? context : throw new InvalidDataException("The controller's selected Docker context is required.");
     }
 
-    public async Task InvokeAsync(string action, string inventory, string directory, int seconds, CancellationToken ct)
+    public async Task InvokeAsync(string action, string inventory, string directory, int seconds, CancellationToken ct,
+        bool captureUntilFence = false)
     {
         Directory.CreateDirectory(directory);
         // Reserve before launching: the controller legitimately writes its own output files.
@@ -83,6 +84,7 @@ public sealed class StandLifecycle
         foreach (var arg in new[] { "-NoProfile", "-File", script, "-Action", action, "-ConfigPath", inventory,
             "-OutputDirectory", directory, "-DockerExecutable", docker, "-CaptureSeconds", seconds.ToString(System.Globalization.CultureInfo.InvariantCulture) })
             info.ArgumentList.Add(arg);
+        if (captureUntilFence) info.ArgumentList.Add("-CaptureUntilFence");
         if (trustedBuildProvenanceDirectory != null)
         {
             info.ArgumentList.Add("-TrustedBuildProvenanceDirectory");

@@ -14,6 +14,44 @@ def digest(path):
     with pathlib.Path(path).open('rb') as stream:
         return hashlib.file_digest(stream, 'sha256').hexdigest()
 
+
+def restore_attempt(attempt, destination):
+    """Restore sealed evidence strictly; retain unsealed interruption bytes separately."""
+    attempt, destination = pathlib.Path(attempt), pathlib.Path(destination)
+    receipt_path = attempt / 'archive.json'
+    if not receipt_path.exists():
+        if (attempt / 'sha256.json').exists():
+            raise RuntimeError('Sealed attempt is missing its archive receipt: ' + str(attempt))
+        if not (attempt / 'started.json').is_file():
+            raise RuntimeError('Interrupted attempt is missing started.json: ' + str(attempt))
+        # No synthetic result/seal/receipt: CampaignJournal must still see an
+        # interruption, including when result.json was written before a crash.
+        before = {str(p.relative_to(attempt)): digest(p) for p in attempt.rglob('*') if p.is_file()}
+        shutil.copytree(attempt, destination)
+        copied = {str(p.relative_to(destination)): digest(p) for p in destination.rglob('*') if p.is_file()}
+        after = {str(p.relative_to(attempt)): digest(p) for p in attempt.rglob('*') if p.is_file()}
+        if before != copied or before != after:
+            raise RuntimeError('Interrupted evidence changed during snapshot: ' + str(attempt))
+        return {'status': 'interrupted-unsealed', 'source': str(attempt), 'fileSha256': before,
+                'archiveVerified': False, 'originalRetained': True}
+    receipt = read(receipt_path)
+    if digest(receipt['archivePath']) != receipt['sha256']:
+        raise RuntimeError('Archive digest mismatch')
+    destination.mkdir(parents=True)
+    with zipfile.ZipFile(receipt['archivePath']) as archive:
+        for member in archive.infolist():
+            target = (destination / member.filename).resolve()
+            if not target.is_relative_to(destination.resolve()):
+                raise RuntimeError('Unsafe archive entry')
+        archive.extractall(destination)
+    seals = read(destination / 'sha256.json')
+    for name, expected in seals.items():
+        target = (destination / name).resolve()
+        if not target.is_relative_to(destination.resolve()) or digest(target) != expected:
+            raise RuntimeError('Restored evidence seal mismatch')
+    return {'status': 'sealed-archive', 'source': str(attempt), 'archiveVerified': True,
+            'archivePath': receipt['archivePath'], 'archiveSha256': receipt['sha256']}
+
 class Campaign:
     def __init__(self, root):
         self.root = pathlib.Path(root).resolve()
@@ -98,7 +136,7 @@ class Campaign:
     def common(self, broker, stage):
         inputs = self.root / 'inputs'
         return ['--config', inputs / f'{broker}-{stage}.json', '--stand', inputs / f'{broker}-stand.json',
-                '--benchmark-repo', self.plan['benchmarkRepository'], '--stand-script', pathlib.Path(self.plan['benchmarkRepository']) / 'scripts/BrokerStand.ps1']
+                '--benchmark-repo', self.plan['benchmarkRepository'], '--stand-script', self.plan.get('standScript', str(pathlib.Path(self.plan['benchmarkRepository']) / 'scripts/BrokerStand.ps1'))]
 
     def once(self, key, action):
         if key in self.state['completed']: return
@@ -160,26 +198,20 @@ class Campaign:
         restored = restored.with_name(restored.name + '-' + uuid.uuid4().hex[:8])
         restored.mkdir(parents=True)
         shutil.copy2(raw / 'campaign.json', restored / 'campaign.json')
+        restorations = []
         for attempt in sorted(raw.glob('attempts/*/attempt-*')):
-            receipt = read(attempt / 'archive.json')
-            if digest(receipt['archivePath']) != receipt['sha256']: raise RuntimeError('Archive digest mismatch')
             destination = restored / attempt.relative_to(raw)
-            destination.mkdir(parents=True)
-            with zipfile.ZipFile(receipt['archivePath']) as archive:
-                for member in archive.infolist():
-                    target = (destination / member.filename).resolve()
-                    if not target.is_relative_to(destination.resolve()): raise RuntimeError('Unsafe archive entry')
-                archive.extractall(destination)
-            seals = read(destination / 'sha256.json')
-            for name, sha in seals.items():
-                if digest(destination / name) != sha: raise RuntimeError('Restored evidence seal mismatch')
+            restorations.append(restore_attempt(attempt, destination))
         output = self.storage / 'verification' / (broker + '-' + stage + '-aggregate-' + uuid.uuid4().hex[:8])
         self.invoke(['dotnet', self.plan['benchmarkCli'], 'aggregate'] + self.common(broker, stage) + ['--raw', restored, '--output', output], broker + '-' + stage + '-restore-aggregate')
         original = read(self.root / 'brokers' / broker / stage / 'broker-observations.v3.json')
         repeated = read(output / 'broker-observations.v3.json')
         if original['points'] != repeated['points'] or original['provenance']['identity'] != repeated['provenance']['identity']:
             raise RuntimeError('Recomputed scientific observations differ')
-        verification = {'broker': broker, 'stage': stage, 'verified': True, 'originalSha256': digest(self.root / 'brokers' / broker / stage / 'broker-observations.v3.json'), 'restoredAggregateSha256': digest(output / 'broker-observations.v3.json'), 'note': 'Scientific points and campaign identity match; inputSha256 differs between compact and restored representation.'}
+        verification = {'broker': broker, 'stage': stage, 'verified': True, 'originalSha256': digest(self.root / 'brokers' / broker / stage / 'broker-observations.v3.json'), 'restoredAggregateSha256': digest(output / 'broker-observations.v3.json'),
+            'attemptRestorations': restorations,
+            'interruptedAttemptCount': sum(x['status'] == 'interrupted-unsealed' for x in restorations),
+            'note': 'Scientific points and campaign identity match; sealed archives verified; unsealed interruptions copied byte-for-byte and retained at source, not declared archived. Input hashes may differ between compact and restored representation.'}
         atomic_json(self.root / 'brokers' / broker / stage / 'archive-verification.json', verification)
         # Check mount and resolved scope immediately before deleting only our scratch.
         self.storage_check()
